@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 DEFAULT_COLLECTION = "pdf_chunks"
 
 
 def get_chroma_dir() -> str:
-    # project_root/chroma_db by default (easy for Docker)
     return os.getenv("CHROMA_DIR", "chroma_db")
 
 
