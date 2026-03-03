@@ -161,4 +161,4 @@ def make_answer(question: str, hits: List[RetrievedChunk]) -> str:
     for h in hits[:3]:
         excerpts.append(normalize_one_line(h.text)[:240])
 
-    return "Relevant excerpts:\n" + "\n\n".join(f"- {e}" for e in excerpts if e)
+    return "Relevant excerpts: " + ", ".join(f" {e}" for e in excerpts if e)
