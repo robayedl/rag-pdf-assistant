@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-
 from pypdf import PdfReader
 
 
@@ -17,8 +15,7 @@ def extract_pages(pdf_path: str) -> list[str]:
     reader = PdfReader(pdf_path)
     pages: list[str] = []
     for p in reader.pages:
-        txt = p.extract_text() or ""
-        pages.append(txt)
+        pages.append(p.extract_text() or "")
     return pages
 
 
@@ -28,27 +25,28 @@ def chunk_text(
     chunk_overlap: int = 200,
 ) -> list[Chunk]:
     """
-    Simple character-based chunking:
-    - chunk_size: number of characters per chunk
-    - overlap: number of overlapping characters
+    Safe character-based chunking that always makes progress.
     """
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size")
+
     chunks: list[Chunk] = []
+    step = chunk_size - chunk_overlap
+
     for page_idx, page_text in enumerate(pages, start=1):
         text = (page_text or "").strip()
         if not text:
             continue
 
-        start = 0
         chunk_id = 0
-        while start < len(text):
+        for start in range(0, len(text), step):
             end = min(start + chunk_size, len(text))
             piece = text[start:end].strip()
             if piece:
                 chunks.append(Chunk(text=piece, page=page_idx, chunk_id=chunk_id))
                 chunk_id += 1
-            start = end - chunk_overlap
-            if start < 0:
-                start = 0
-            if start >= len(text):
+
+            if end >= len(text):
                 break
+
     return chunks
