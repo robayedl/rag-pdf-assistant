@@ -1,2 +1,14 @@
+
+
+
+[project]
+name = "rag-pdf-assistant"
+version = "0.1.0"
+description = "FastAPI-based RAG system for querying PDF documents using embeddings and ChromaDB"
+authors = [
+    {name = "Robayed Ashraf"}
+]
+requires-python = ">=3.12"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]

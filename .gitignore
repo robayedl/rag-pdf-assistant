@@ -27,9 +27,7 @@ eval/results.json
 eval/report.json
 eval/report.md
 
-# Local data
-storage/
-chroma_db/
+
 
 
 
