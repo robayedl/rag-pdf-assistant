@@ -56,10 +56,12 @@ rag-pdf-assistant
 │   └── storage.py
 │
 ├── rag                      # RAG pipeline
-│   ├── ingest.py            # PDF chunking and indexing
-│   ├── retrieve.py          # semantic retrieval
+│   ├── answer.py            # builds final response from retrieved chunks
 │   ├── embed.py             # embedding generation
-│   └── store.py             # vector database interface
+│   ├── ingest.py            # PDF parsing and chunk indexing
+│   ├── retrieve.py          # semantic search retrieval
+│   ├── store.py             # vector database interface (Chroma)
+│   └── text_clean.py        # PDF text preprocessing
 │
 ├── eval                     # evaluation scripts
 ├── tests                    # automated tests
