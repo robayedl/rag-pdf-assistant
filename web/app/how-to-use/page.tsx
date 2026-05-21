@@ -104,6 +104,10 @@ export default function HowToUsePage() {
           builds use Docker layer cache and are significantly faster.
         </div>
       </main>
+
+      <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
+        © {new Date().getFullYear()} DocuMind
+      </footer>
     </div>
   );
 }

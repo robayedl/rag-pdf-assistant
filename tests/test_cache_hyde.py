@@ -14,7 +14,7 @@ def _doc(content="test content", ref="ref1"):
     )
 
 
-# ── rerank_with_score ─────────────────────────────────────────────────────────
+# rerank_with_score
 
 def test_rerank_with_score_returns_correct_top_score():
     from rag.chains.rerank import rerank_with_score
@@ -39,7 +39,7 @@ def test_rerank_with_score_empty_input():
     assert score == 0.0
 
 
-# ── semantic cache ────────────────────────────────────────────────────────────
+# semantic cache
 
 def test_cache_lookup_graceful_when_redis_down():
     from rag import cache
@@ -125,7 +125,7 @@ def test_cache_lookup_is_scoped_by_doc_id():
     assert result is None
 
 
-# ── retrieve_with_hyde ────────────────────────────────────────────────────────
+# retrieve_with_hyde
 
 def test_retrieve_with_hyde_skips_hyde_when_confident():
     from rag.chains.retrieval import retrieve_with_hyde
@@ -180,7 +180,7 @@ def test_retrieve_with_hyde_returns_empty_when_no_candidates():
     assert hyde_triggered is False
 
 
-# ── /query from_cache field ───────────────────────────────────────────────────
+# /query from_cache field
 
 def test_query_response_includes_from_cache_false(tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_DIR", str(tmp_path))

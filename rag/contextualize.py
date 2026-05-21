@@ -50,11 +50,7 @@ def _get_llm() -> ChatGoogleGenerativeAI:
 
 
 def contextualize_chunk(full_doc: str, chunk: str) -> str:
-    """Return a one-sentence context that situates *chunk* within *full_doc*.
-
-    Results are cached in SQLite so repeated ingestion of the same document
-    does not incur additional API calls.
-    """
+    """Return a one-sentence context for chunk; result cached in SQLite by hash."""
     doc_hash = _sha256(full_doc)
     chunk_hash = _sha256(chunk)
 

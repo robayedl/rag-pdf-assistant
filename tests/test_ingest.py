@@ -19,10 +19,6 @@ from fixtures.elements import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _dummy_pdf(tmp_path: Path) -> Path:
     """Write a trivial valid-looking file that satisfies path.exists()."""
     p = tmp_path / "pdfs" / "test123.pdf"
@@ -31,9 +27,7 @@ def _dummy_pdf(tmp_path: Path) -> Path:
     return p
 
 
-# ---------------------------------------------------------------------------
 # _clean_text
-# ---------------------------------------------------------------------------
 
 def test_clean_text_ligatures():
     from rag.ingest import _clean_text
@@ -47,9 +41,7 @@ def test_clean_text_collapses_whitespace():
     assert result.count("\n") <= 2
 
 
-# ---------------------------------------------------------------------------
 # _html_to_markdown
-# ---------------------------------------------------------------------------
 
 def test_html_to_markdown_produces_pipe_table():
     from rag.ingest import _html_to_markdown
@@ -75,9 +67,7 @@ def test_html_to_markdown_fallback_on_import_error(monkeypatch):
     assert "<" not in result
 
 
-# ---------------------------------------------------------------------------
 # _build_docs_from_elements — table handling
-# ---------------------------------------------------------------------------
 
 def test_table_becomes_single_markdown_chunk():
     from rag.ingest import _build_docs_from_elements
@@ -101,9 +91,7 @@ def test_table_with_no_html_falls_back_to_text():
     assert "col1" in docs[0].page_content
 
 
-# ---------------------------------------------------------------------------
 # _build_docs_from_elements — narrative/title chunking
-# ---------------------------------------------------------------------------
 
 def test_narrative_is_chunked():
     from rag.ingest import _build_docs_from_elements
@@ -124,9 +112,7 @@ def test_title_element_produces_chunk():
     assert docs[0].metadata["element_type"] == "text"
 
 
-# ---------------------------------------------------------------------------
 # _build_docs_from_elements — figure captioning
-# ---------------------------------------------------------------------------
 
 def test_figure_creates_chunk_with_caption(tmp_path, monkeypatch):
     from rag.ingest import _build_docs_from_elements
@@ -178,9 +164,7 @@ def test_figure_cap_respected(tmp_path, monkeypatch):
     assert len(docs) == 2
 
 
-# ---------------------------------------------------------------------------
 # _caption_figure
-# ---------------------------------------------------------------------------
 
 def test_caption_figure_returns_empty_for_missing_file():
     from rag.ingest import _caption_figure
@@ -216,9 +200,7 @@ def test_caption_figure_returns_empty_on_api_error(tmp_path):
     assert result == ""
 
 
-# ---------------------------------------------------------------------------
-# index_document integration (mocked unstructured + stores)
-# ---------------------------------------------------------------------------
+# index_document integration
 
 def test_index_document_normal_path(tmp_path, monkeypatch):
     from rag import ingest as ingest_mod

@@ -265,19 +265,23 @@ def query(req: QueryRequest) -> QueryResponse:
     if not answer and not docs:
         raise HTTPException(status_code=404, detail="Document not indexed.")
 
-    citations = [
-        Citation(
-            ref=doc.metadata.get("ref", ""),
-            page=doc.metadata.get("page", -1),
-            chunk_id=doc.metadata.get("chunk_id", -1),
-            source=doc.metadata.get("source", ""),
-        )
-        for doc in docs
-    ]
+    citations = (
+        []
+        if _is_no_answer(answer)
+        else [
+            Citation(
+                ref=doc.metadata.get("ref", ""),
+                page=doc.metadata.get("page", -1),
+                chunk_id=doc.metadata.get("chunk_id", -1),
+                source=doc.metadata.get("source", ""),
+            )
+            for doc in docs
+        ]
+    )
 
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
-    if answer:
+    if answer and not _is_no_answer(answer):
         semantic_cache.store(
             req.question,
             req.doc_id,
@@ -373,27 +377,51 @@ async def query_stream(req: StreamQueryRequest) -> StreamingResponse:
                 yield _sse("token", token)
                 await asyncio.sleep(0.005)
 
-            citations_data = [
-                {
-                    "ref": d.metadata.get("ref", ""),
-                    "page": d.metadata.get("page", -1),
-                    "chunk_id": d.metadata.get("chunk_id", -1),
-                    "source": d.metadata.get("source", ""),
-                    "text": d.page_content[:200],
-                }
-                for d in docs
-            ]
+            citations_data = (
+                []
+                if _is_no_answer(answer)
+                else [
+                    {
+                        "ref": d.metadata.get("ref", ""),
+                        "page": d.metadata.get("page", -1),
+                        "chunk_id": d.metadata.get("chunk_id", -1),
+                        "source": d.metadata.get("source", ""),
+                        "text": d.page_content[:200],
+                    }
+                    for d in docs
+                ]
+            )
             yield _sse("citations", json.dumps(citations_data))
             yield _sse("meta", json.dumps({"hyde_triggered": state.get("hyde_triggered", False)}))
             yield _sse("done", "")
 
-            if answer:
+            if answer and not _is_no_answer(answer):
                 semantic_cache.store(req.question, req.doc_id, answer, citations_data)
 
         except Exception as e:
             yield _sse("error", str(e))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+_NO_ANSWER_PREFIXES = (
+    "i do not know",
+    "i don't know",
+    "i cannot find",
+    "i can't find",
+    "no information",
+    "not mentioned",
+    "not found",
+    "not provided",
+    "not available in",
+    "based on the provided document, i",
+    "based on the provided context, i",
+)
+
+
+def _is_no_answer(text: str) -> bool:
+    lowered = text.strip().lower()
+    return any(lowered.startswith(p) for p in _NO_ANSWER_PREFIXES)
 
 
 def _sse(event: str, data: str) -> str:

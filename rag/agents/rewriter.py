@@ -15,8 +15,8 @@ _REWRITER_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             "You are a query rewriter. The retrieved documents were not relevant to the user's question. "
-            "Rewrite the question to be more specific and better suited for document search. "
-            "Return only the rewritten question, nothing else.",
+            "Fix any spelling or typos, then rewrite the question to be more specific and better suited "
+            "for document search. Return only the rewritten question, nothing else.",
         ),
         ("human", "Original question: {question}"),
     ]

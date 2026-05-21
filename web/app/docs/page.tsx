@@ -205,6 +205,10 @@ export default function DocsPage() {
         )}
       </main>
 
+      <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
+        © {new Date().getFullYear()} DocuMind
+      </footer>
+
       <Dialog open={uploadOpen} onOpenChange={(open) => { if (!uploading) { setUploadOpen(open); setSelectedFile(null); } }}>
         <DialogContent>
           <DialogHeader>

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   SendIcon, Loader2Icon, BotIcon, UserIcon,
   PlusIcon, Trash2Icon, MessageSquareIcon, CopyIcon, CheckIcon,
+  PanelRightOpenIcon, PanelRightCloseIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { chat, Citation, Doc, listDocs } from "@/lib/api";
+import { chat, Citation, Doc, getDocFileUrl, listDocs } from "@/lib/api";
 import {
   ChatSession,
   StoredMessage,
@@ -25,10 +26,21 @@ import {
   loadSessions,
   upsertSession,
 } from "@/lib/chat-storage";
+import dynamic from "next/dynamic";
+
+// Lazy-load PdfPane to avoid SSR issues with pdfjs
+const PdfPane = dynamic(() => import("@/components/PdfPane"), { ssr: false });
 
 interface LiveMessage extends StoredMessage {
   status?: string;
   streaming?: boolean;
+}
+
+interface ActivePdf {
+  url: string;
+  page: number;
+  snippet: string;
+  jumpKey: number;
 }
 
 function uid() {
@@ -60,7 +72,12 @@ export default function ChatClient() {
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // PDF pane state
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [activePdf, setActivePdf] = useState<ActivePdf | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeSessionRef = useRef<ChatSession | null>(null);
@@ -141,6 +158,18 @@ export default function ChatClient() {
     }
   }
 
+  // Open the PDF pane for a specific citation
+  function openCitation(citation: Citation, docId: string) {
+    const url = getDocFileUrl(docId);
+    setActivePdf((prev) => ({
+      url,
+      page: citation.page > 0 ? citation.page : 1,
+      snippet: citation.text ?? "",
+      jumpKey: (prev?.jumpKey ?? 0) + 1,
+    }));
+    setPdfOpen(true);
+  }
+
   const persistMessages = useCallback(
     (msgs: StoredMessage[]) => {
       const session = activeSessionRef.current;
@@ -190,10 +219,28 @@ export default function ChatClient() {
     return err;
   }
 
+  function stop() {
+    cancelledRef.current = true;
+    abortRef.current?.abort();
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    setStreaming(false);
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last.role === "assistant" && last.streaming) {
+        next[next.length - 1] = { ...last, streaming: false, status: undefined, interrupted: true };
+        persistMessages(toStored(next));
+      }
+      return next;
+    });
+  }
+
   function send() {
     const question = input.trim();
     if (!question || !activeSession || streaming) return;
 
+    cancelledRef.current = false;
     setInput("");
     setStreaming(true);
 
@@ -204,8 +251,6 @@ export default function ChatClient() {
 
     setMessages((prev) => {
       const next = [...prev, userMsg, assistantMsg];
-      // Immediately persist user message + interrupted placeholder so
-      // navigation away doesn't lose the question.
       persistMessages(toStored([...next.slice(0, -1), { ...assistantMsg, interrupted: true }]));
       return next;
     });
@@ -214,8 +259,9 @@ export default function ChatClient() {
 
     chat(
       { doc_id: activeSession.doc_id, question, session_id: activeSession.id },
-      (msg) => updateLast((m) => ({ ...m, status: msg })),
+      (msg) => { if (!cancelledRef.current) updateLast((m) => ({ ...m, status: msg })); },
       (token) => {
+        if (cancelledRef.current) return;
         setMessages((prev) => {
           if (prev.length === 0) return prev;
           const next = [...prev];
@@ -224,13 +270,13 @@ export default function ChatClient() {
             content: next[next.length - 1].content + token,
             status: undefined,
           };
-          // Persist partial answer every 600 ms so navigation preserves progress
           debouncedPersist(toStored(next));
           return next;
         });
       },
-      (citations) => updateLast((m) => ({ ...m, citations })),
+      (citations) => { if (!cancelledRef.current) updateLast((m) => ({ ...m, citations })); },
       (duration_ms) => {
+        if (cancelledRef.current) return;
         if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
         setMessages((prev) => {
           const next = prev.map((m, i) =>
@@ -244,6 +290,7 @@ export default function ChatClient() {
         setStreaming(false);
       },
       (err) => {
+        if (cancelledRef.current) return;
         if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
         const msg = friendlyError(err);
         setMessages((prev) => {
@@ -310,7 +357,7 @@ export default function ChatClient() {
       </aside>
 
       {/* Chat area */}
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className={`flex flex-col overflow-hidden transition-all duration-300 ${pdfOpen ? "flex-1" : "flex-1"}`}>
         {!activeSession ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
             <MessageSquareIcon className="size-10 opacity-20" />
@@ -324,9 +371,28 @@ export default function ChatClient() {
           <>
             {/* Header */}
             <div className="border-b border-border px-4 h-12 flex items-center gap-2 shrink-0 bg-background/80 backdrop-blur-sm">
-              <span className="text-sm font-medium truncate text-muted-foreground">
+              <span className="text-sm font-medium truncate text-muted-foreground flex-1">
                 {activeSession.doc_name}
               </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                onClick={() => {
+                  if (!pdfOpen) {
+                    // Open to show placeholder if no citation loaded yet
+                    setPdfOpen(true);
+                  } else {
+                    setPdfOpen(false);
+                  }
+                }}
+                title={pdfOpen ? "Close PDF pane" : "Open PDF pane"}
+              >
+                {pdfOpen
+                  ? <PanelRightCloseIcon className="size-4" />
+                  : <PanelRightOpenIcon className="size-4" />
+                }
+              </Button>
             </div>
 
             {/* Messages */}
@@ -348,7 +414,7 @@ export default function ChatClient() {
                         className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
                       >
                         <Avatar className="size-7 shrink-0 mt-0.5">
-                          <AvatarFallback className={`text-[10px] ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                          <AvatarFallback className={`text-[10px] ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-red-500/15 text-red-400"}`}>
                             {msg.role === "user"
                               ? <UserIcon className="size-3.5" />
                               : <BotIcon className="size-3.5" />
@@ -408,13 +474,14 @@ export default function ChatClient() {
                           {msg.citations && msg.citations.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 px-1">
                               {msg.citations.map((c: Citation, i: number) => (
-                                <span
+                                <button
                                   key={i}
-                                  title={c.text}
-                                  className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded-full cursor-default border border-primary/20"
+                                  title={c.text ?? `Page ${c.page}`}
+                                  onClick={() => openCitation(c, activeSession.doc_id)}
+                                  className="text-[10px] bg-primary/15 hover:bg-primary/30 text-primary px-2 py-0.5 rounded-full cursor-pointer border border-primary/20 hover:border-primary/50 transition-colors active:scale-95"
                                 >
                                   p.{c.page}
-                                </span>
+                                </button>
                               ))}
                             </div>
                           )}
@@ -446,14 +513,49 @@ export default function ChatClient() {
                   disabled={streaming}
                   className="flex-1"
                 />
-                <Button type="submit" size="icon-lg" disabled={!input.trim() || streaming}>
-                  {streaming ? <Loader2Icon className="animate-spin" /> : <SendIcon />}
-                </Button>
+                {streaming ? (
+                  <Button
+                    type="button"
+                    size="icon-lg"
+                    variant="destructive"
+                    onClick={stop}
+                    title="Stop generating"
+                  >
+                    <span className="block size-3 bg-current" />
+                  </Button>
+                ) : (
+                  <Button type="submit" size="icon-lg" disabled={!input.trim()}>
+                    <SendIcon />
+                  </Button>
+                )}
               </form>
             </div>
           </>
         )}
       </div>
+
+      {/* PDF Pane */}
+      <AnimatePresence>
+        {pdfOpen && (
+          <motion.div
+            key="pdf-pane"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: "50%", opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: "easeInOut" }}
+            className="shrink-0 border-l border-border flex flex-col overflow-hidden bg-background"
+            style={{ minWidth: 0 }}
+          >
+            <PdfPane
+              url={activePdf?.url ?? null}
+              targetPage={activePdf?.page ?? 1}
+              snippet={activePdf?.snippet ?? ""}
+              jumpKey={activePdf?.jumpKey ?? 0}
+              onClose={() => setPdfOpen(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* New Chat dialog */}
       <Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
