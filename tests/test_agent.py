@@ -7,10 +7,6 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-
 def _make_state(**kwargs):
     base = {
         "question": "test question",
@@ -34,9 +30,7 @@ def _fake_doc(content="Some relevant content."):
     )
 
 
-# ──────────────────────────────────────────────
 # Router tests
-# ──────────────────────────────────────────────
 
 def test_router_routes_greeting():
     from rag.agents.router import route_query
@@ -59,9 +53,7 @@ def test_router_falls_back_to_retrieve_on_error():
     assert result["route"] == "retrieve"
 
 
-# ──────────────────────────────────────────────
 # Grader tests
-# ──────────────────────────────────────────────
 
 def test_grader_filters_irrelevant_docs():
     from rag.agents.grader import grade_documents
@@ -90,9 +82,7 @@ def test_grader_keeps_all_docs_on_llm_error():
     assert len(result["documents"]) == 2
 
 
-# ──────────────────────────────────────────────
 # Hallucination checker tests
-# ──────────────────────────────────────────────
 
 def test_hallucination_checker_catches_ungrounded_answer():
     from rag.agents.hallucination import check_hallucination, GroundednessScore
@@ -131,9 +121,7 @@ def test_hallucination_checker_passes_grounded_answer():
     assert result["grounded"] is True
 
 
-# ──────────────────────────────────────────────
-# Retry loop / conditional edge tests
-# ──────────────────────────────────────────────
+# Retry / conditional edge tests
 
 def test_retry_loop_stops_at_max_retries():
     from rag.agents.graph import decide_after_grading
@@ -171,9 +159,7 @@ def test_hallucination_routes_to_generate_when_not_grounded():
     assert decide_after_hallucination(state) == "generate"
 
 
-# ──────────────────────────────────────────────
 # Full pipeline test (mocked LLM nodes)
-# ──────────────────────────────────────────────
 
 def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
     """Full graph run with real ChromaDB + embedding, all LLM nodes mocked."""
@@ -210,9 +196,7 @@ def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
     assert result["grounded"] is True
 
 
-# ──────────────────────────────────────────────
-# Conversation memory test
-# ──────────────────────────────────────────────
+# Conversation memory tests
 
 def test_conversation_memory_stores_and_retrieves():
     from rag.agents.memory import get_memory, clear_memory

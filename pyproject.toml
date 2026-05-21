@@ -1,10 +1,7 @@
-
-
-
 [project]
 name = "documind"
-version = "0.1.0"
-description = "DocuMind — Agentic Document Intelligence powered by LangGraph, Gemini, and hybrid search"
+version = "1.6.0"
+description = "DocuMind — Agentic Document Intelligence powered by LangGraph, Gemini 2.5 Flash, and hybrid search"
 authors = [
     {name = "Robayed Ashraf"}
 ]
@@ -18,7 +15,8 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
-exclude = [".venv", "__pycache__"]
+exclude = [".venv", "__pycache__", "legacy"]
 
 [tool.ruff.lint]
-ignore = ["E402"]
+select = ["E", "F", "W"]
+ignore = ["E402", "E501"]

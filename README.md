@@ -27,8 +27,9 @@ https://github.com/user-attachments/assets/290e7caf-6676-43c2-9f9f-9df63d28c3f9
 | **Semantic Cache** | Redis vector cache — repeated or near-identical queries return instantly |
 | **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves |
 | **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency answers |
-| **Streaming Responses** | Server-Sent Events (SSE) for real-time token-by-token output |
+| **Streaming Responses** | Server-Sent Events (SSE) for real-time token-by-token output with stop/cancel support |
 | **Conversation Memory** | Per-session chat history maintained across turns |
+| **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
 | **Rich PDF Parsing** | Table extraction (Markdown) and figure captioning via Gemini multimodal |
 | **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall |
 
@@ -194,7 +195,7 @@ npm run dev   # UI on :3000
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed origins |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL used by the Next.js frontend |
 | `REDIS_URL` | `redis://localhost:6379` | Redis Stack connection URL |
-| `SEMANTIC_CACHE_THRESHOLD` | `0.97` | Cosine similarity threshold for cache hit (0–1) |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit (0–1) |
 | `CACHE_TTL_SECONDS` | `86400` | Cache TTL in seconds (default: 24 h) |
 | `HYDE_THRESHOLD` | `0.3` | Reranker score below which HyDE is triggered |
 | `EXTRACT_FIGURES` | `true` | Caption figures with Gemini 2.5 Flash multimodal (max 30/doc) |
@@ -244,8 +245,8 @@ documind/
 │   ├── cache.py          # Redis semantic cache
 │   └── ingest.py         # PDF parsing — text, tables, figures
 ├── web/                  # Next.js 16 frontend (App Router, shadcn/ui)
-│   ├── app/              # Pages: /, /chat, /docs, /login
-│   ├── components/       # Shared components and shadcn/ui primitives
+│   ├── app/              # Pages: /, /chat, /docs, /about, /how-to-use
+│   ├── components/       # Shared components incl. PdfPane viewer
 │   ├── lib/              # Typed API client (api.ts) and utilities
 │   └── __tests__/        # Jest + Testing Library tests
 ├── legacy/streamlit/     # Previous Streamlit UI (kept for reference)

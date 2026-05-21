@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 
-# ──────────────────────────────────────────────
 # Node functions
-# ──────────────────────────────────────────────
 
 def retrieve(state: GraphState) -> GraphState:
     """Hybrid search + reranking with HyDE fallback on low-confidence results."""
@@ -61,9 +59,7 @@ def fallback(state: GraphState) -> GraphState:
     return {"generation": "I do not know based on the provided document."}
 
 
-# ──────────────────────────────────────────────
 # Conditional edge functions
-# ──────────────────────────────────────────────
 
 def decide_after_routing(state: GraphState) -> Literal["retrieve", "direct_response"]:
     return "retrieve" if state["route"] == "retrieve" else "direct_response"
@@ -92,9 +88,7 @@ def decide_after_hallucination(
     return "fallback"
 
 
-# ──────────────────────────────────────────────
 # Graph builder
-# ──────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
 def build_graph():
@@ -135,9 +129,7 @@ def build_graph():
     return graph.compile()
 
 
-# ──────────────────────────────────────────────
 # Public entry point
-# ──────────────────────────────────────────────
 
 _NODE_LABELS: dict[str, str] = {
     "router":             "Routing your question…",
