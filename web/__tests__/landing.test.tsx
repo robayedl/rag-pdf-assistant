@@ -1,6 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import LandingPage from "@/app/page";
 
+jest.mock("@clerk/nextjs", () => ({
+  useUser: () => ({ isSignedIn: false }),
+  SignInButton: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  UserButton: () => null,
+}));
+
 describe("Landing page", () => {
   it("renders the hero heading", () => {
     render(<LandingPage />);

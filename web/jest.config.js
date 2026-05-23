@@ -7,6 +7,7 @@ const config = {
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/$1",
+    "^@clerk/themes$": "<rootDir>/__mocks__/@clerk/themes.ts",
   },
   modulePathIgnorePatterns: ["<rootDir>/.next/"],
 };

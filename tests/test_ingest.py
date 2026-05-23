@@ -218,13 +218,12 @@ def test_index_document_normal_path(tmp_path, monkeypatch):
     ]
 
     with patch("rag.ingest.extract_elements", return_value=elements), \
-         patch("rag.ingest.add_documents") as mock_add, \
-         patch("rag.ingest.save_bm25") as mock_bm25:
+         patch("rag.ingest.clear_document"), \
+         patch("rag.ingest.add_documents") as mock_add:
         count, collection = ingest_mod.index_document(doc_id)
 
     assert count > 0
     mock_add.assert_called_once()
-    mock_bm25.assert_called_once()
 
 
 def test_index_document_raises_when_pdf_missing(tmp_path, monkeypatch):

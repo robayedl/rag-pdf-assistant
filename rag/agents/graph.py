@@ -24,7 +24,8 @@ MAX_RETRIES = 3
 def retrieve(state: GraphState) -> GraphState:
     """Hybrid search + reranking with HyDE fallback on low-confidence results."""
     try:
-        docs, hyde_triggered = retrieve_with_hyde(doc_id=state["doc_id"], query=state["question"])
+        top_k = state.get("top_k", 6)
+        docs, hyde_triggered = retrieve_with_hyde(doc_id=state["doc_id"], query=state["question"], top_k=top_k)
         if not docs and state["retry_count"] == 0:
             return {
                 "documents": [],
@@ -148,6 +149,7 @@ def run_agent(
     doc_id: str,
     session_id: str = "",
     on_step: Callable[[str], None] | None = None,
+    top_k: int = 6,
 ) -> GraphState:
     """Run the agentic RAG graph, calling on_step(label) as each node completes."""
 
@@ -163,6 +165,7 @@ def run_agent(
         "error": "",
         "session_id": session_id,
         "hyde_triggered": False,
+        "top_k": top_k,
     }
 
     if on_step is None:

@@ -28,7 +28,7 @@ describe("listDocs", () => {
 
 describe("uploadDoc", () => {
   it("posts a multipart form and returns upload response", async () => {
-    const resp = { doc_id: "xyz", filename: "paper.pdf", stored_path: "/storage/pdfs/xyz.pdf" };
+    const resp = { doc_id: "xyz", filename: "paper.pdf" };
     mockFetch(resp);
     const file = new File(["content"], "paper.pdf", { type: "application/pdf" });
     const result = await uploadDoc(file);
@@ -51,6 +51,7 @@ describe("chat", () => {
     const ctrl = new AbortController();
     chat(
       { doc_id: "abc", question: "What is this?", session_id: "sess1" },
+      undefined,
       () => {}, () => {}, () => {}, () => {},
       () => {},
       ctrl.signal

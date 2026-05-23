@@ -37,7 +37,7 @@ _PROMPT = ChatPromptTemplate.from_messages(
 
 
 def _doc_text(doc: Document) -> str:
-    return doc.page_content
+    return doc.metadata.get("original_content") or doc.page_content
 
 
 def _format_inputs(inputs: dict) -> dict:

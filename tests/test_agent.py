@@ -162,9 +162,8 @@ def test_hallucination_routes_to_generate_when_not_grounded():
 # Full pipeline test (mocked LLM nodes)
 
 def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
-    """Full graph run with real ChromaDB + embedding, all LLM nodes mocked."""
+    """Full graph run with mocked store + embedding, all LLM nodes mocked."""
     monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
-    monkeypatch.setenv("CHROMA_DIR", str(tmp_path / "chroma"))
 
     doc_id = "pipeline_doc"
     pdf_dir = tmp_path / "pdfs"
@@ -175,7 +174,9 @@ def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
     from types import SimpleNamespace
     _el = NarrativeText(text="Python is a programming language.")
     _el.metadata = SimpleNamespace(page_number=1)
-    with patch("rag.ingest.extract_elements", return_value=[_el]):
+    with patch("rag.ingest.extract_elements", return_value=[_el]), \
+         patch("rag.ingest.clear_document"), \
+         patch("rag.ingest.add_documents"):
         from rag.ingest import index_document
         index_document(doc_id)
 
@@ -183,6 +184,7 @@ def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
     fake_doc = _fake_doc("Python is a programming language.")
 
     with patch("rag.agents.graph.route_query", return_value={"route": "retrieve"}), \
+         patch("rag.agents.graph.retrieve", return_value={"documents": [fake_doc], "hyde_triggered": False}), \
          patch("rag.agents.graph.grade_documents", return_value={"documents": [fake_doc]}), \
          patch("rag.agents.graph.generate", return_value={"generation": "Python is a language."}), \
          patch("rag.agents.graph.check_hallucination", return_value={"grounded": True}):

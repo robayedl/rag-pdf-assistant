@@ -1,7 +1,7 @@
 [project]
 name = "documind"
-version = "1.6.0"
-description = "DocuMind — Agentic Document Intelligence powered by LangGraph, Gemini 2.5 Flash, and hybrid search"
+version = "1.7.0"
+description = "DocuMind — Agentic Document Intelligence powered by LangGraph, Gemini 2.5 Flash, hybrid search, Clerk auth, and pgvector"
 authors = [
     {name = "Robayed Ashraf"}
 ]
@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 filterwarnings = [
-    "ignore::DeprecationWarning:chromadb.*",
+    "ignore::DeprecationWarning",
 ]
 
 [tool.ruff]

@@ -1,6 +1,6 @@
 # DocuMind — Agentic Document Intelligence
 
-> Chat with any PDF using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, and real-time streaming.
+> Chat with any PDF using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, real-time streaming, Clerk auth, and Postgres + pgvector storage.
 
 [![CI](https://github.com/robayedl/documind/actions/workflows/ci.yml/badge.svg)](https://github.com/robayedl/documind/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/290e7caf-6676-43c2-9f9f-9df63d28c3f9
 | Feature | Description |
 |---|---|
 | **Agentic RAG** | LangGraph pipeline with routing, grading, rewriting, and hallucination checking |
-| **Hybrid Search** | BM25 + semantic vector search fused with Reciprocal Rank Fusion (RRF) |
+| **Hybrid Search** | Dense pgvector (HNSW cosine) + sparse PostgreSQL `ts_rank` fused with Reciprocal Rank Fusion (RRF) |
 | **Cross-Encoder Reranking** | `ms-marco-MiniLM-L-6-v2` reranker for high-precision results |
 | **Semantic Cache** | Redis vector cache — repeated or near-identical queries return instantly |
 | **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves |
@@ -31,6 +31,8 @@ https://github.com/user-attachments/assets/290e7caf-6676-43c2-9f9f-9df63d28c3f9
 | **Conversation Memory** | Per-session chat history maintained across turns |
 | **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
 | **Rich PDF Parsing** | Table extraction (Markdown) and figure captioning via Gemini multimodal |
+| **Auth** | Clerk — Google + email sign-in, per-user document isolation, JWT validation |
+| **Postgres + pgvector** | All metadata and embeddings in one Postgres instance; migrations in `migrations/` |
 | **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall |
 
 ---
@@ -49,7 +51,7 @@ flowchart TD
     RT -->|greeting| DA[Direct Response]
     DA --> E1([END])
 
-    RT -->|document question| RET[Hybrid Retrieval\nBM25 + Vector + RRF]
+    RT -->|document question| RET[Hybrid Retrieval\npgvector + ts_rank + RRF]
     RET --> RR[Cross-Encoder Rerank]
     RR --> HY{Score < HyDE\nThreshold?}
 
@@ -85,8 +87,8 @@ flowchart LR
     CR -->|yes| CTX[Gemini prepends\ncontext sentence]
     CR -->|no| EMB
     CTX --> EMB[Embed\nall-mpnet-base-v2]
-    EMB --> VEC[(ChromaDB\nVector Store)]
-    EMB --> BM[(BM25\nIndex)]
+    EMB --> VEC[(pgvector\nHNSW index)]
+    EMB --> TS[(PostgreSQL\nts_rank / GIN)]
 ```
 
 ---
@@ -99,7 +101,9 @@ flowchart LR
 | **Agent** | LangGraph, LangChain |
 | **LLM** | Google Gemini 2.5 Flash |
 | **Embeddings & Reranking** | HuggingFace `all-mpnet-base-v2`, `ms-marco-MiniLM-L-6-v2` |
-| **Vector Store** | ChromaDB + BM25 (hybrid) |
+| **Vector Store** | PostgreSQL + pgvector (HNSW cosine) + `ts_rank` full-text (hybrid) |
+| **Database** | PostgreSQL (Supabase or self-hosted via Docker) |
+| **Auth** | Clerk (Google + email, JWT/RS256) |
 | **Cache** | Redis Stack (vector similarity) |
 | **PDF Parsing** | unstructured (hi_res), Gemini 2.5 Flash multimodal |
 | **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS — UI designed with Claude Code |
@@ -110,22 +114,34 @@ flowchart LR
 
 ## Quick Start
 
+### Prerequisites
+
+- Docker & Docker Compose
+- A [Clerk](https://clerk.com) account (free tier works)
+- A Google AI Studio API key
+- A Postgres instance — the `docker-compose.yml` spins one up automatically with pgvector
+
 ### Option 1 — Docker (Recommended)
 
 ```bash
 git clone https://github.com/robayedl/documind.git
 cd documind
+cp .env.example .env
 ```
 
+Edit `.env` and fill in `GOOGLE_API_KEY`, `CLERK_JWT_KEY`, and `DATABASE_URL`.
+
 ```bash
-cp .env.example .env   # add GOOGLE_API_KEY
+cp web/.env.local.example web/.env.local
 ```
+
+Edit `web/.env.local` and fill in `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `NEXT_PUBLIC_API_URL`.
 
 ```bash
 docker compose up --build
 ```
 
-> The first build downloads ML models and may take a few minutes. The `web` service waits for the API to be healthy before starting.
+> The first build downloads ML models (~2 GB) and may take several minutes. Tables and indexes are created automatically on first startup.
 
 | Service | URL |
 |---|---|
@@ -141,12 +157,9 @@ cd documind
 ```
 
 ```bash
-# required for PDF parsing
-# macOS (Homebrew): brew install tesseract poppler
-# macOS (conda):    conda install -c conda-forge tesseract poppler
-# Linux:            apt-get install tesseract-ocr poppler-utils
-# If you use conda, set TESSERACT_CMD=/opt/homebrew/bin/tesseract in .env
-# to ensure the Homebrew build (not the conda one) is used for OCR
+# system deps for PDF parsing
+# macOS: brew install tesseract poppler
+# Linux: apt-get install tesseract-ocr poppler-utils
 ```
 
 ```bash
@@ -155,7 +168,8 @@ pip install -r requirements.txt
 ```
 
 ```bash
-cp .env.example .env   # add GOOGLE_API_KEY
+cp .env.example .env                         # fill in GOOGLE_API_KEY, CLERK_JWT_KEY, DATABASE_URL
+cp web/.env.local.example web/.env.local     # fill in NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY
 ```
 
 ```bash
@@ -163,45 +177,98 @@ make run   # API on :8000
 ```
 
 ```bash
-cd web
-cp .env.local.example .env.local
-npm install
-npm run dev   # UI on :3000
+cd web && npm install && npm run dev   # UI on :3000
 ```
+
+---
+
+## Auth Setup (Clerk)
+
+1. Create an app at [clerk.com](https://clerk.com) and enable **Google** and **Email** sign-in.
+2. Go to **API Keys** — copy **Publishable Key** → `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in both `.env` and `web/.env.local`
+3. Copy **Secret Key** → `CLERK_SECRET_KEY` in both `.env` (used by Docker web container) and `web/.env.local` (used in local dev)
+4. Go to **JWT Templates → Default** → copy the **PEM public key** → `CLERK_JWT_KEY` in `.env` (wrap in double quotes)
+5. Development keys (`pk_test_*`) automatically whitelist `localhost` — no domain configuration needed.
+
+> In local dev without `CLERK_JWT_KEY`, the backend auto-creates a `dev_user` identity so you can test without signing in.
 
 ---
 
 ## API
 
+All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`.
+
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/documents` | List all uploaded documents |
+| `GET` | `/health` | Health check (no auth) |
+| `GET` | `/documents` | List current user's documents |
 | `POST` | `/documents` | Upload a PDF, returns `doc_id` |
-| `POST` | `/documents/{doc_id}/index` | Parse, chunk, and index a document |
+| `POST` | `/documents/{doc_id}/index/stream` | Parse, chunk, index — SSE progress |
 | `GET` | `/documents/{doc_id}/file` | Download the original PDF |
-| `POST` | `/query` | Ask a question, get a JSON response |
-| `POST` | `/query/stream` | Ask a question, receive SSE streaming tokens |
+| `POST` | `/query/stream` | Ask a question — SSE streaming tokens + citations |
 
 ---
 
 ## Environment Variables
 
+**Backend / Docker** (`.env`):
+
 | Variable | Default | Description |
 |---|---|---|
 | `GOOGLE_API_KEY` | — | **Required.** Google AI Studio API key |
-| `STORAGE_DIR` | `./storage` | Directory for uploaded PDFs |
-| `CHROMA_DIR` | `./chroma_db` | ChromaDB persistence directory |
-| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed origins |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL used by the Next.js frontend |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk publishable key (baked into web build) |
+| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key (passed to web container at runtime) |
+| `CLERK_JWT_KEY` | — | **Required in prod.** RSA public key for JWT validation (PEM, quoted) |
+| `DATABASE_URL` | `postgresql://documind:documind@localhost:5432/documind` | Postgres connection string |
+| `STORAGE_DIR` | `./storage` | Directory for uploaded PDFs and figures |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
 | `REDIS_URL` | `redis://localhost:6379` | Redis Stack connection URL |
-| `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit (0–1) |
-| `CACHE_TTL_SECONDS` | `86400` | Cache TTL in seconds (default: 24 h) |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit |
+| `CACHE_TTL_SECONDS` | `86400` | Cache TTL (seconds) |
 | `HYDE_THRESHOLD` | `0.3` | Reranker score below which HyDE is triggered |
-| `EXTRACT_FIGURES` | `true` | Caption figures with Gemini 2.5 Flash multimodal (max 30/doc) |
+| `EXTRACT_FIGURES` | `true` | Caption figures with Gemini multimodal (max 30/doc) |
 | `CONTEXTUAL_RETRIEVAL` | `true` | Prepend per-chunk context before embedding |
-| `TESSERACT_CMD` | _(system PATH)_ | Full path to the `tesseract` binary — set when the wrong version is picked up (e.g. conda). macOS Homebrew: `/opt/homebrew/bin/tesseract` |
-| `TOKENIZERS_PARALLELISM` | `false` | Set to `false` to suppress HuggingFace tokenizer warnings when uvicorn forks worker processes |
+| `CONTEXTUALIZE_WORKERS` | `8` | Parallel LLM workers for contextual retrieval during indexing |
+| `TESSERACT_CMD` | _(PATH)_ | Full path to `tesseract` binary |
+
+**Frontend** (`web/.env.local`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk frontend publishable key |
+| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key (server-side auth) |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL for the frontend |
+
+---
+
+## Project Structure
+
+```
+documind/
+├── app/
+│   ├── auth.py           # Clerk JWT validation (FastAPI dependency)
+│   ├── db.py             # SQLAlchemy async engine + session factory
+│   ├── models.py         # ORM models: User, Document, Conversation, Message
+│   ├── storage.py        # File-system helpers (PDF read/write)
+│   └── main.py           # FastAPI routes
+├── rag/
+│   ├── agents/           # LangGraph nodes: router, grader, generator, rewriter
+│   ├── chains/           # Retrieval (pgvector + ts_rank + HyDE), reranking, generation
+│   ├── store.py          # pgvector CRUD (add, search, clear)
+│   ├── cache.py          # Redis semantic cache
+│   └── ingest.py         # PDF parsing — text, tables, figures
+├── legacy/
+│   ├── migrations/       # SQL applied once at DB init (001_init, 002_pgvector)
+│   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
+│   └── streamlit/        # Previous Streamlit UI (kept for reference)
+├── web/                  # Next.js 16 frontend (App Router, shadcn/ui, Clerk)
+│   ├── app/              # Pages: /, /chat, /docs, /login, /about, /how-to-use
+│   ├── components/       # Nav (with UserButton), PdfPane, shadcn primitives
+│   ├── lib/              # Typed API client with auth headers (api.ts)
+│   └── middleware.ts     # Clerk route protection for /chat and /docs
+├── eval/                 # RAGAS runner and golden dataset
+└── tests/                # Python backend tests
+```
 
 ---
 
@@ -212,46 +279,17 @@ Results on a 30-question golden dataset built from **"Attention Is All You Need"
 <!-- EVAL-RESULTS-START -->
 | Metric | Score | |
 |---|---|---|
-| `faithfulness` | 0.974 | ███████████████████ |
-| `answer_relevancy` | 0.764 | ███████████████ |
-| `context_precision` | 0.917 | ██████████████████ |
-| `context_recall` | 0.833 | ████████████████ |
+| `faithfulness` | 0.984 | ███████████████████ |
+| `answer_relevancy` | 0.887 | █████████████████ |
+| `context_precision` | 0.882 | █████████████████ |
+| `context_recall` | 0.933 | ██████████████████ |
 
-_Evaluated on 30 questions · 2026-05-08 · full results in [`eval/results/latest.json`](eval/results/latest.json)_
+_Evaluated on 30 questions · 2026-05-23 · full results in [`eval/results/latest.json`](eval/results/latest.json)_
 <!-- EVAL-RESULTS-END -->
-
-> Upload and index the PDF first (via the UI or API), then run evaluation with the returned `doc_id`.
 
 ```bash
 DOC_ID=<your_doc_id> make eval   # full run (~10 min)
-```
-
-```bash
-make update-readme               # refresh scores without re-running
-```
-
-See [eval/EVALUATION_GUIDE.md](eval/EVALUATION_GUIDE.md) for dataset format and cost estimates.
-
----
-
-## Project Structure
-
-```
-documind/
-├── app/                  # FastAPI routes and storage helpers
-├── rag/
-│   ├── agents/           # LangGraph nodes: router, grader, generator, hallucination, rewriter
-│   ├── chains/           # Retrieval (hybrid + HyDE), reranking, generation chains
-│   ├── cache.py          # Redis semantic cache
-│   └── ingest.py         # PDF parsing — text, tables, figures
-├── web/                  # Next.js 16 frontend (App Router, shadcn/ui)
-│   ├── app/              # Pages: /, /chat, /docs, /about, /how-to-use
-│   ├── components/       # Shared components incl. PdfPane viewer
-│   ├── lib/              # Typed API client (api.ts) and utilities
-│   └── __tests__/        # Jest + Testing Library tests
-├── legacy/streamlit/     # Previous Streamlit UI (kept for reference)
-├── eval/                 # RAGAS runner and golden dataset
-└── tests/                # Python backend tests
+make update-readme                # refresh scores without re-running
 ```
 
 ---
@@ -259,14 +297,8 @@ documind/
 ## Tests
 
 ```bash
-# Backend
-make test
-
-# Frontend
-cd web && npm test
-```
-
-```bash
+make test        # backend
+make test-ui     # frontend
 make lint
 ```
 
