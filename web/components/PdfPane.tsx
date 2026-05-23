@@ -7,7 +7,10 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon, FileTextIcon, AlertCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url,
+).toString();
 
 export interface PdfPaneProps {
   url: string | null;
