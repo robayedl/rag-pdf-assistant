@@ -1,24 +1,31 @@
 import { render, screen } from "@testing-library/react";
 import LoginPage from "@/app/login/page";
 
+jest.mock("@clerk/nextjs", () => ({
+  SignIn: () => <div data-testid="clerk-sign-in" />,
+  useUser: () => ({ isSignedIn: false }),
+}));
+
 jest.mock("next/navigation", () => ({
   usePathname: () => "/login",
 }));
 
+jest.mock("framer-motion", () => ({
+  motion: {
+    div: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+      <div {...props}>{children}</div>
+    ),
+  },
+}));
+
 describe("Login page", () => {
-  it("renders the Sign in card title", () => {
+  it("renders the DocuMind logo link", () => {
     render(<LoginPage />);
-    expect(screen.getByText("Sign in")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /documind/i })).toHaveAttribute("href", "/");
   });
 
-  it("shows auth coming soon description", () => {
+  it("renders the Clerk sign-in component", () => {
     render(<LoginPage />);
-    expect(screen.getByText(/coming in a future release/i)).toBeInTheDocument();
-  });
-
-  it("renders disabled sign-in buttons", () => {
-    render(<LoginPage />);
-    const buttons = screen.getAllByRole("button");
-    buttons.forEach((btn) => expect(btn).toBeDisabled());
+    expect(screen.getByTestId("clerk-sign-in")).toBeInTheDocument();
   });
 });

@@ -11,7 +11,6 @@ export interface Doc {
 export interface UploadResponse {
   doc_id: string;
   filename: string;
-  stored_path: string;
 }
 
 export interface IndexResponse {
@@ -34,36 +33,51 @@ export interface ChatParams {
   session_id?: string;
 }
 
-export async function listDocs(): Promise<Doc[]> {
-  const res = await fetch(`${API_URL}/documents`);
+function authHeaders(token?: string): HeadersInit {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function listDocs(token?: string): Promise<Doc[]> {
+  const res = await fetch(`${API_URL}/documents`, {
+    headers: authHeaders(token),
+  });
   if (!res.ok) throw new Error("Failed to fetch documents");
   return res.json();
 }
 
-export async function uploadDoc(file: File): Promise<UploadResponse> {
+export async function uploadDoc(file: File, token?: string): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_URL}/documents`, {
     method: "POST",
+    headers: authHeaders(token),
     body: form,
   });
   if (!res.ok) throw new Error("Upload failed");
   return res.json();
 }
 
-export async function deleteDoc(docId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/documents/${docId}`, { method: "DELETE" });
+export async function deleteDoc(docId: string, token?: string): Promise<void> {
+  const res = await fetch(`${API_URL}/documents/${docId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
   if (!res.ok) throw new Error("Failed to delete document");
 }
 
 export function indexDocStream(
   docId: string,
+  token: string | undefined,
   onStatus: (msg: string) => void,
   onDone: (chunks: number, index_time_s: number) => void,
   onError: (err: string) => void,
   signal?: AbortSignal
 ): void {
-  fetch(`${API_URL}/documents/${docId}/index/stream`, { method: "POST", signal })
+  fetch(`${API_URL}/documents/${docId}/index/stream`, {
+    method: "POST",
+    headers: authHeaders(token),
+    signal,
+  })
     .then(async (res) => {
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       if (!res.body) throw new Error("No response body");
@@ -86,8 +100,7 @@ export function indexDocStream(
               const { chunks, index_time_s } = JSON.parse(data);
               onDone(chunks, index_time_s);
             } catch { onDone(0, 0); }
-          }
-          else if (event === "error") onError(data);
+          } else if (event === "error") onError(data);
         }
       }
     })
@@ -96,12 +109,15 @@ export function indexDocStream(
     });
 }
 
-export function getDocFileUrl(docId: string): string {
-  return `${API_URL}/documents/${docId}/file`;
+export function getDocFileUrl(docId: string, token?: string): string {
+  // Token is passed as query param for direct PDF loading in iframe/react-pdf
+  const url = `${API_URL}/documents/${docId}/file`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
 export function chat(
   params: ChatParams,
+  token: string | undefined,
   onStatus: (msg: string) => void,
   onToken: (token: string) => void,
   onCitations: (citations: Citation[]) => void,
@@ -112,7 +128,7 @@ export function chat(
   const startTime = Date.now();
   fetch(`${API_URL}/query/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify(params),
     signal,
   })
@@ -140,8 +156,7 @@ export function chat(
           else if (event === "token") onToken(data);
           else if (event === "citations") {
             try { onCitations(JSON.parse(data)); } catch { /* ignore */ }
-          }
-          else if (event === "done") onDone(Date.now() - startTime);
+          } else if (event === "done") onDone(Date.now() - startTime);
           else if (event === "error") onError(data);
         }
       }

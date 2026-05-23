@@ -1,35 +1,45 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+"use client";
+
+import { SignIn } from "@clerk/nextjs";
+import { dark } from "@clerk/themes";
+import { motion } from "framer-motion";
 import Nav from "@/components/nav";
 
 export default function LoginPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Nav />
-      <main className="flex-1 flex items-center justify-center px-4">
-        <Card className="w-full max-w-sm">
-          <CardHeader className="text-center">
-            <CardTitle>Sign in</CardTitle>
-            <CardDescription>Authentication is coming in a future release.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <Button disabled className="w-full">
-              Continue with Google
-            </Button>
-            <Button variant="outline" disabled className="w-full">
-              Continue with GitHub
-            </Button>
-            <p className="text-center text-xs text-muted-foreground pt-2">
-              For now,{" "}
-              <Link href="/docs" className="underline underline-offset-4 hover:text-foreground">
-                explore the app without an account
-              </Link>
-              .
-            </p>
-          </CardContent>
-        </Card>
+
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 50% at 50% -5%, oklch(0.62 0.22 264 / 0.12), transparent)",
+        }}
+      />
+
+      <main className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+        >
+          <SignIn
+            routing="hash"
+            appearance={{
+              baseTheme: dark,
+              variables: {
+                colorPrimary: "oklch(0.62 0.22 264)",
+              },
+            }}
+          />
+        </motion.div>
       </main>
+
+      <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
+        © {new Date().getFullYear()} DocuMind
+      </footer>
     </div>
   );
 }

@@ -3,18 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Brain } from "lucide-react";
+import { UserButton, useUser } from "@clerk/nextjs";
+
+import { Button } from "@/components/ui/button";
 
 const links = [
-  { href: "/",            label: "Home",       external: false },
-  { href: "/docs",        label: "Documents",  external: false },
-  { href: "/chat",        label: "Chat",       external: false },
-  { href: "/how-to-use",  label: "How to Use", external: false },
-  { href: "/about",       label: "About",      external: false },
+  { href: "/",           label: "Home",       external: false },
+  { href: "/docs",       label: "Documents",  external: false },
+  { href: "/chat",       label: "Chat",       external: false },
+  { href: "/how-to-use", label: "How to Use", external: false },
+  { href: "/about",      label: "About",      external: false },
   { href: "https://github.com/robayedl/documind", label: "GitHub", external: true },
 ];
 
 export default function Nav() {
   const path = usePathname();
+  const { isSignedIn } = useUser();
 
   return (
     <header className="border-b border-border bg-background/70 backdrop-blur-md sticky top-0 z-50">
@@ -50,6 +54,16 @@ export default function Nav() {
               </Link>
             )
           )}
+
+          <div className="ml-2 flex items-center">
+            {isSignedIn ? (
+              <UserButton appearance={{ elements: { avatarBox: "size-8" } }} />
+            ) : (
+              <Link href="/login">
+                <Button size="sm" variant="outline">Sign in</Button>
+              </Link>
+            )}
+          </div>
         </nav>
       </div>
     </header>

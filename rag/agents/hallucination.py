@@ -46,7 +46,10 @@ def check_hallucination(state: GraphState) -> GraphState:
         structured_llm = llm.with_structured_output(GroundednessScore)
         chain = _HALLUCINATION_PROMPT | structured_llm
 
-        context = "\n\n".join(doc.page_content for doc in state["documents"])
+        context = "\n\n".join(
+            doc.metadata.get("original_content") or doc.page_content
+            for doc in state["documents"]
+        )
         result: GroundednessScore = chain.invoke(
             {"context": context, "generation": state["generation"]}
         )

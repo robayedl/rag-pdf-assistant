@@ -18,19 +18,21 @@ export interface ChatSession {
   updated_at: string;
 }
 
-const KEY = "documind_chats";
+function storageKey(userId: string) {
+  return userId ? `documind_chats_${userId}` : "documind_chats";
+}
 
-export function loadSessions(): ChatSession[] {
+export function loadSessions(userId: string): ChatSession[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "[]");
+    return JSON.parse(localStorage.getItem(storageKey(userId)) ?? "[]");
   } catch {
     return [];
   }
 }
 
-export function saveSessions(sessions: ChatSession[]): void {
-  localStorage.setItem(KEY, JSON.stringify(sessions));
+export function saveSessions(sessions: ChatSession[], userId: string): void {
+  localStorage.setItem(storageKey(userId), JSON.stringify(sessions));
 }
 
 export function createSession(doc_id: string, doc_name: string): ChatSession {
@@ -46,21 +48,23 @@ export function createSession(doc_id: string, doc_name: string): ChatSession {
 
 export function upsertSession(
   sessions: ChatSession[],
-  updated: ChatSession
+  updated: ChatSession,
+  userId: string
 ): ChatSession[] {
   const idx = sessions.findIndex((s) => s.id === updated.id);
   const next = idx >= 0
     ? sessions.map((s, i) => (i === idx ? updated : s))
     : [updated, ...sessions];
-  saveSessions(next);
+  saveSessions(next, userId);
   return next;
 }
 
 export function deleteSession(
   sessions: ChatSession[],
-  id: string
+  id: string,
+  userId: string
 ): ChatSession[] {
   const next = sessions.filter((s) => s.id !== id);
-  saveSessions(next);
+  saveSessions(next, userId);
   return next;
 }

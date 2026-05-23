@@ -2,51 +2,24 @@ from __future__ import annotations
 
 import logging
 import os
-import pickle
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List
 
+import psycopg2
+import psycopg2.extras
 from langchain_core.documents import Document
-from rank_bm25 import BM25Okapi
 
-from rag.store import get_chroma_dir, similarity_search, similarity_search_by_vector
+from rag.store import _postgres_dsn, similarity_search, similarity_search_by_vector
 
 logger = logging.getLogger(__name__)
 
-RRF_K = 60  # standard RRF constant
-
-
-def _bm25_path(doc_id: str) -> Path:
-    return Path(get_chroma_dir()) / f"bm25_{doc_id}.pkl"
-
-
-def load_bm25(doc_id: str) -> Optional[Tuple[BM25Okapi, List[Document]]]:
-    """Load a persisted BM25 index for a document. Returns None if not found."""
-    path = _bm25_path(doc_id)
-    if not path.exists():
-        return None
-    with open(path, "rb") as f:
-        return pickle.load(f)
-
-
-def save_bm25(doc_id: str, documents: List[Document]) -> None:
-    """Build and persist a BM25 index for a list of documents."""
-    corpus = [doc.page_content.lower().split() for doc in documents]
-    bm25 = BM25Okapi(corpus)
-    path = _bm25_path(doc_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump((bm25, documents), f)
+RRF_K = 60
 
 
 def _rrf_score(rank: int) -> float:
     return 1.0 / (RRF_K + rank + 1)
 
 
-def _rrf_merge(
-    list_a: List[Document], list_b: List[Document], k: int
-) -> List[Document]:
-    """Merge two ranked document lists using Reciprocal Rank Fusion."""
+def _rrf_merge(list_a: List[Document], list_b: List[Document], k: int) -> List[Document]:
     rrf_scores: dict[str, float] = {}
     for rank, doc in enumerate(list_a):
         ref = doc.metadata["ref"]
@@ -55,27 +28,44 @@ def _rrf_merge(
         ref = doc.metadata["ref"]
         rrf_scores[ref] = rrf_scores.get(ref, 0.0) + _rrf_score(rank)
 
-    all_docs: dict[str, Document] = {
-        doc.metadata["ref"]: doc for doc in list_a + list_b
-    }
+    all_docs: dict[str, Document] = {d.metadata["ref"]: d for d in list_a + list_b}
     sorted_refs = sorted(rrf_scores, key=lambda r: rrf_scores[r], reverse=True)
     return [all_docs[ref] for ref in sorted_refs[:k]]
 
 
+def sparse_search(doc_id: str, query: str, k: int = 10) -> List[Document]:
+    """PostgreSQL ts_rank full-text search — BM25 replacement."""
+    dsn = _postgres_dsn()
+    with psycopg2.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT content, metadata,
+                       ts_rank(tsv, plainto_tsquery('english', %s)) AS rank
+                FROM chunks
+                WHERE doc_id = %s::uuid
+                  AND tsv @@ plainto_tsquery('english', %s)
+                ORDER BY rank DESC
+                LIMIT %s
+                """,
+                (query, doc_id, query, k),
+            )
+            rows = cur.fetchall()
+
+    return [Document(page_content=r[0], metadata=r[1]) for r in rows]
+
+
 def hybrid_search(doc_id: str, query: str, k: int = 10) -> List[Document]:
-    """BM25 + vector search fused with RRF. Falls back to pure vector if no BM25 index."""
-    vector_results: List[Document] = similarity_search(doc_id, query, k=k)
+    """Dense vector search + sparse ts_rank fused with RRF."""
+    dense = similarity_search(doc_id, query, k=k)
+    sparse = sparse_search(doc_id, query, k=k)
 
-    bm25_data = load_bm25(doc_id)
-    if bm25_data is None:
-        return vector_results
+    if not sparse:
+        return dense
+    if not dense:
+        return sparse
 
-    bm25, corpus_docs = bm25_data
-    scores = bm25.get_scores(query.lower().split())
-    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
-    bm25_results: List[Document] = [corpus_docs[i] for i in top_indices]
-
-    return _rrf_merge(vector_results, bm25_results, k=k)
+    return _rrf_merge(dense, sparse, k=k)
 
 
 def _hyde_dense_search(doc_id: str, query: str, k: int) -> List[Document]:
@@ -88,11 +78,8 @@ def _hyde_dense_search(doc_id: str, query: str, k: int) -> List[Document]:
     return similarity_search_by_vector(doc_id, get_embeddings().embed_query(hypothetical), k=k)
 
 
-def retrieve_with_hyde(doc_id: str, query: str, top_k: int = 5) -> tuple[List[Document], bool]:
-    """Hybrid search + reranking. Triggers HyDE when top reranker score < HYDE_THRESHOLD.
-
-    Returns (docs, hyde_triggered).
-    """
+def retrieve_with_hyde(doc_id: str, query: str, top_k: int = 6) -> tuple[List[Document], bool]:
+    """Hybrid search + reranking. Triggers HyDE when top reranker score < HYDE_THRESHOLD."""
     from rag.chains.rerank import rerank_with_score
 
     hyde_threshold = float(os.getenv("HYDE_THRESHOLD", "0.3"))

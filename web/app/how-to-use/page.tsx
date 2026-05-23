@@ -1,43 +1,50 @@
 import Nav from "@/components/nav";
-import { UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon } from "lucide-react";
+import { LogInIcon, UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon } from "lucide-react";
 
 const steps = [
   {
     number: "01",
-    icon: UploadIcon,
-    title: "Upload a PDF",
-    desc: "Go to Documents and click Upload PDF. Select any PDF from your machine. Only PDF files are supported.",
-    detail: "The file is stored on the server and a unique document ID is assigned.",
+    icon: LogInIcon,
+    title: "Sign in",
+    desc: "Click Sign in from the nav bar or visit /login. Create an account or sign in with an existing one.",
+    detail: "DocuMind uses Clerk for authentication. Your documents and chats are private — no other user can see them.",
   },
   {
     number: "02",
-    icon: DatabaseIcon,
-    title: "Index the document",
-    desc: "Indexing happens automatically after upload. DocuMind parses the PDF into text, tables, and figures, then embeds each chunk and builds a BM25 index.",
-    detail: "This step can take 1–3 minutes depending on file size and whether figure extraction is enabled (EXTRACT_FIGURES env var). The Chat button activates once indexing completes.",
+    icon: UploadIcon,
+    title: "Upload a PDF",
+    desc: "Go to Documents and click Upload PDF. Select any PDF from your machine. Only PDF files are supported.",
+    detail: "The file is stored securely on the server and associated with your account.",
   },
   {
     number: "03",
-    icon: MessageSquareIcon,
-    title: "Start chatting",
-    desc: "Click Chat on any indexed document. You can also navigate to /chat directly and pick a document from the selector at the top.",
-    detail: "Each browser tab keeps its own conversation session — memory is maintained across turns within a session.",
+    icon: DatabaseIcon,
+    title: "Index the document",
+    desc: "Indexing happens automatically after upload. DocuMind parses the PDF into text, tables, and figures, then embeds each chunk into pgvector and builds a BM25 index.",
+    detail: "This step can take 1–3 minutes depending on file size. Chunks are stored in PostgreSQL with HNSW vector indexes and full-text search. The Chat button activates once indexing completes.",
   },
   {
     number: "04",
+    icon: MessageSquareIcon,
+    title: "Start chatting",
+    desc: "Click Chat on any indexed document. You can also navigate to /chat directly and pick a document from the selector.",
+    detail: "Conversation history is saved per session and per account — pick up where you left off.",
+  },
+  {
+    number: "05",
     icon: LightbulbIcon,
     title: "Read citations",
-    desc: "Every answer includes page badges beneath the response. Hover a badge to preview the source passage that grounded the answer.",
+    desc: "Every answer includes page badges beneath the response. Click a badge to open the PDF at the exact source passage.",
     detail: "If the model cannot find relevant context, it says so rather than hallucinating.",
   },
 ];
 
 const tips = [
   "Ask specific questions — the retrieval pipeline works best with focused queries.",
-  "Rephrase if the first answer is weak — the rewrite node will use a different query.",
-  "Set EXTRACT_FIGURES=false in .env to skip figure captioning and speed up indexing.",
+  "Rephrase if the first answer is weak — the rewrite node will try a different query.",
   "Repeated or near-identical questions hit the semantic cache and return instantly.",
-  "Session memory persists within a tab — ask follow-up questions freely.",
+  "Your documents are private — only you can see and chat with files you've uploaded.",
+  "Session memory persists across logins — your chat history is saved to your account.",
 ];
 
 export default function HowToUsePage() {

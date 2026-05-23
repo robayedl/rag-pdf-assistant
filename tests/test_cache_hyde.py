@@ -182,21 +182,13 @@ def test_retrieve_with_hyde_returns_empty_when_no_candidates():
 
 # /query from_cache field
 
-def test_query_response_includes_from_cache_false(tmp_path, monkeypatch):
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
-    pdf_dir = tmp_path / "pdfs"
-    pdf_dir.mkdir(parents=True)
-    doc_id = "somedoc"
-    (pdf_dir / f"{doc_id}.pdf").write_bytes(b"placeholder")
-
-    from fastapi.testclient import TestClient
-    from app.main import app
+def test_query_response_includes_from_cache_false(authed_client_with_doc):
+    client, doc_id = authed_client_with_doc
 
     with patch("app.main.semantic_cache.lookup", return_value=None), \
          patch("app.main.run_agent", return_value={
              "generation": "an answer", "documents": [], "retry_count": 0, "hyde_triggered": False
          }):
-        client = TestClient(app)
         r = client.post("/query", json={"doc_id": doc_id, "question": "What is this?"})
 
     assert r.status_code == 200
@@ -205,23 +197,15 @@ def test_query_response_includes_from_cache_false(tmp_path, monkeypatch):
     assert data["hyde_triggered"] is False
 
 
-def test_query_returns_from_cache_true_on_hit(tmp_path, monkeypatch):
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
-    pdf_dir = tmp_path / "pdfs"
-    pdf_dir.mkdir(parents=True)
-    doc_id = "somedoc"
-    (pdf_dir / f"{doc_id}.pdf").write_bytes(b"placeholder")
+def test_query_returns_from_cache_true_on_hit(authed_client_with_doc):
+    client, doc_id = authed_client_with_doc
 
     cached_payload = {
         "answer": "cached answer text",
         "citations": [{"ref": "r1", "page": 1, "chunk_id": 0, "source": "f.pdf"}],
     }
 
-    from fastapi.testclient import TestClient
-    from app.main import app
-
     with patch("app.main.semantic_cache.lookup", return_value=cached_payload):
-        client = TestClient(app)
         r = client.post("/query", json={"doc_id": doc_id, "question": "What is this document about?"})
 
     assert r.status_code == 200

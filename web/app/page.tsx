@@ -4,20 +4,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   GitBranch, Search, Zap, Lightbulb,
-  Radio, BookOpen, MessageSquare, FileText, Brain,
+  Radio, BookOpen, MessageSquare, Brain, ShieldCheck,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import Nav from "@/components/nav";
 
 const features = [
-  { icon: GitBranch,   title: "Agentic RAG",          desc: "LangGraph pipeline with routing, grading, rewriting, and hallucination checking" },
-  { icon: Search,      title: "Hybrid Search",         desc: "BM25 + vector retrieval fused with Reciprocal Rank Fusion" },
-  { icon: Zap,         title: "Semantic Cache",         desc: "Redis vector cache — repeated queries return instantly" },
-  { icon: Lightbulb,   title: "HyDE Fallback",          desc: "Hypothetical passage generation on low-confidence retrieval" },
-  { icon: Radio,       title: "SSE Streaming",          desc: "Real-time token-by-token output via Server-Sent Events" },
-  { icon: BookOpen,    title: "Citations",              desc: "Every answer is grounded with page references from your document" },
-  { icon: MessageSquare, title: "Conversation Memory", desc: "Per-session chat history maintained across turns" },
-  { icon: FileText,    title: "Rich PDF Parsing",       desc: "Table extraction and figure captioning via Gemini multimodal" },
+  { icon: GitBranch,    title: "Agentic RAG",          desc: "LangGraph pipeline with routing, grading, rewriting, and hallucination checking" },
+  { icon: Search,       title: "Hybrid Search",         desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion" },
+  { icon: Zap,          title: "Semantic Cache",         desc: "Redis vector cache — repeated queries return instantly" },
+  { icon: Lightbulb,    title: "HyDE Fallback",          desc: "Hypothetical passage generation on low-confidence retrieval" },
+  { icon: Radio,        title: "SSE Streaming",          desc: "Real-time token-by-token output via Server-Sent Events" },
+  { icon: BookOpen,     title: "Citations",              desc: "Every answer is grounded with page references from your document" },
+  { icon: MessageSquare, title: "Conversation Memory",  desc: "Per-session chat history saved to your account across logins" },
+  { icon: ShieldCheck,  title: "Secure & Private",       desc: "Clerk JWT auth — your documents and chats are visible only to you" },
 ];
 
 const container = {

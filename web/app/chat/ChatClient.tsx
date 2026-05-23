@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAuth } from "@clerk/nextjs";
 import { chat, Citation, Doc, getDocFileUrl, listDocs } from "@/lib/api";
 import {
   ChatSession,
@@ -62,6 +63,8 @@ export default function ChatClient() {
   const params = useSearchParams();
   const docParam = params.get("doc");
   const sessionParam = params.get("session");
+  const { getToken, isLoaded, isSignedIn, userId } = useAuth();
+  const authTokenRef = useRef<string | undefined>(undefined);
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -84,11 +87,17 @@ export default function ChatClient() {
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const saved = loadSessions();
-    setSessions(saved);
+    if (!isLoaded || !isSignedIn) return;
 
-    listDocs()
-      .then((data) => {
+    const init = async () => {
+      const t = await getToken();
+      authTokenRef.current = t ?? undefined;
+
+      const saved = loadSessions(userId ?? "");
+      setSessions(saved);
+
+      try {
+        const data = await listDocs(authTokenRef.current);
         const indexed = data.filter((d) => d.indexed);
         setDocs(indexed);
 
@@ -98,7 +107,7 @@ export default function ChatClient() {
             const session = createSession(doc.doc_id, doc.filename);
             setSessions((prev) => {
               const next = [session, ...prev];
-              upsertSession(prev, session);
+              upsertSession(prev, session, userId ?? "");
               return next;
             });
             setActiveId(session.id);
@@ -113,9 +122,11 @@ export default function ChatClient() {
             setMessages(session.messages.map((m) => ({ ...m })));
           }
         }
-      })
-      .catch(() => {});
-  }, []);
+      } catch {}
+    };
+
+    init();
+  }, [isLoaded, isSignedIn]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -137,7 +148,7 @@ export default function ChatClient() {
     const session = createSession(doc.doc_id, doc.filename);
     setSessions((prev) => {
       const next = [session, ...prev];
-      upsertSession(prev, session);
+      upsertSession(prev, session, userId ?? "");
       return next;
     });
     setActiveId(session.id);
@@ -149,7 +160,7 @@ export default function ChatClient() {
 
   function removeSession(id: string, name: string) {
     if (!confirm(`Delete chat "${name}"? This cannot be undone.`)) return;
-    setSessions((prev) => deleteSession(prev, id));
+    setSessions((prev) => deleteSession(prev, id, userId ?? ""));
     if (activeId === id) {
       setActiveId(null);
       activeSessionRef.current = null;
@@ -158,16 +169,27 @@ export default function ChatClient() {
     }
   }
 
-  // Open the PDF pane for a specific citation
-  function openCitation(citation: Citation, docId: string) {
-    const url = getDocFileUrl(docId);
-    setActivePdf((prev) => ({
-      url,
-      page: citation.page > 0 ? citation.page : 1,
-      snippet: citation.text ?? "",
-      jumpKey: (prev?.jumpKey ?? 0) + 1,
-    }));
-    setPdfOpen(true);
+  // Open the PDF pane for a specific citation (fetches PDF as authenticated blob URL)
+  async function openCitation(citation: Citation, docId: string) {
+    const rawUrl = getDocFileUrl(docId);
+    const freshToken = await getToken();
+    authTokenRef.current = freshToken ?? undefined;
+    const token = authTokenRef.current;
+    const load = token
+      ? fetch(rawUrl, { headers: { Authorization: `Bearer ${token}` } })
+          .then((r) => r.blob())
+          .then((b) => URL.createObjectURL(b))
+      : Promise.resolve(rawUrl);
+
+    load.then((url) => {
+      setActivePdf((prev) => ({
+        url,
+        page: citation.page > 0 ? citation.page : 1,
+        snippet: citation.text ?? "",
+        jumpKey: (prev?.jumpKey ?? 0) + 1,
+      }));
+      setPdfOpen(true);
+    });
   }
 
   const persistMessages = useCallback(
@@ -180,9 +202,9 @@ export default function ChatClient() {
         updated_at: new Date().toISOString(),
       };
       activeSessionRef.current = updated;
-      setSessions((prev) => upsertSession(prev, updated));
+      setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
     },
-    []
+    [userId]
   );
 
   const debouncedPersist = useCallback(
@@ -236,13 +258,16 @@ export default function ChatClient() {
     });
   }
 
-  function send() {
+  async function send() {
     const question = input.trim();
     if (!question || !activeSession || streaming) return;
 
     cancelledRef.current = false;
     setInput("");
     setStreaming(true);
+
+    const freshToken = await getToken();
+    authTokenRef.current = freshToken ?? undefined;
 
     const userMsg: LiveMessage = { id: uid(), role: "user", content: question };
     const assistantMsg: LiveMessage = {
@@ -259,6 +284,7 @@ export default function ChatClient() {
 
     chat(
       { doc_id: activeSession.doc_id, question, session_id: activeSession.id },
+      authTokenRef.current,
       (msg) => { if (!cancelledRef.current) updateLast((m) => ({ ...m, status: msg })); },
       (token) => {
         if (cancelledRef.current) return;
@@ -477,7 +503,7 @@ export default function ChatClient() {
                                 <button
                                   key={i}
                                   title={c.text ?? `Page ${c.page}`}
-                                  onClick={() => openCitation(c, activeSession.doc_id)}
+                                  onClick={() => void openCitation(c, activeSession.doc_id)}
                                   className="text-[10px] bg-primary/15 hover:bg-primary/30 text-primary px-2 py-0.5 rounded-full cursor-pointer border border-primary/20 hover:border-primary/50 transition-colors active:scale-95"
                                 >
                                   p.{c.page}
@@ -504,7 +530,7 @@ export default function ChatClient() {
             <div className="border-t border-border px-4 py-3 shrink-0 bg-background/80 backdrop-blur-sm">
               <form
                 className="max-w-3xl mx-auto flex gap-2"
-                onSubmit={(e) => { e.preventDefault(); send(); }}
+                onSubmit={(e) => { e.preventDefault(); void send(); }}
               >
                 <Input
                   value={input}

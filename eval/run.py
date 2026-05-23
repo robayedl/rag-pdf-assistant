@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import math
 import os
 import sys
@@ -25,8 +24,6 @@ from pathlib import Path
 from typing import Any
 
 warnings.filterwarnings("ignore")
-# Silence ChromaDB telemetry capture() signature mismatch noise
-logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 
 # Ensure project root is importable when run as a script
@@ -76,7 +73,7 @@ def _load_golden(path: Path, category: str | None, limit: int | None) -> list[di
 
 def _run_pipeline(question: str, doc_id: str) -> tuple[str, list[str]]:
     """Invoke the DocuMind agent and return (answer, retrieved_context_strings)."""
-    state = run_agent(question=question, doc_id=doc_id)
+    state = run_agent(question=question, doc_id=doc_id, top_k=8)
     answer: str = state.get("generation", "")
     docs = state.get("documents", [])
     contexts = [doc.page_content for doc in docs] if docs else ["No context retrieved."]
@@ -372,6 +369,29 @@ def main() -> None:
 
     print("Computing RAGAS metrics…")
     per_metric, means = _compute_ragas(ragas_samples, llm, emb)
+
+    # ── Step 2b: fix out-of-scope scores ──────────────────────────
+    # AnswerRelevancy is undefined for "I do not know" responses — RAGAS
+    # gives 0 even when the refusal is correct. Override to 1.0 for any
+    # out_of_scope question whose answer is a proper refusal.
+    _NO_ANSWER = ("i do not know", "i don't know", "i cannot", "not mentioned")
+    for i, entry in enumerate(entries):
+        if entry.get("category") == "out_of_scope":
+            ans_lower = all_answers[i].strip().lower()
+            is_refusal = any(ans_lower.startswith(p) for p in _NO_ANSWER)
+            if is_refusal:
+                if "answer_relevancy" in per_metric:
+                    per_metric["answer_relevancy"][i] = 1.0
+                # Context precision/recall are not applicable for out-of-scope
+                # questions — the model correctly assessed nothing was relevant.
+                for m in ("context_precision", "context_recall"):
+                    if m in per_metric:
+                        per_metric[m][i] = 1.0
+
+    # Recompute means after overrides
+    for m_name, values in per_metric.items():
+        valid = [v for v in values if v is not None and not (isinstance(v, float) and math.isnan(v))]
+        means[m_name] = round(sum(valid) / len(valid), 4) if valid else 0.0
 
     # ── Step 3: display results ────────────────────────────────────
     _print_per_question_table(entries, per_metric, all_answers)

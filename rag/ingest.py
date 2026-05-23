@@ -4,6 +4,7 @@ import base64
 import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, List, Tuple
 
@@ -19,9 +20,16 @@ _tesseract_cmd = os.environ.get("TESSERACT_CMD")
 if _tesseract_cmd:
     unstructured_pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
 
-from rag.chains.retrieval import save_bm25
+
+def _tesseract_available() -> bool:
+    import shutil
+    cmd = _tesseract_cmd or "tesseract"
+    return shutil.which(cmd) is not None
+
 from rag.contextualize import contextualize_chunk
-from rag.store import DEFAULT_COLLECTION, add_documents, clear_document
+from rag.store import add_documents, clear_document
+
+DEFAULT_COLLECTION = "pgvector"
 
 
 _SPLITTER = RecursiveCharacterTextSplitter(
@@ -105,13 +113,20 @@ def _caption_figure(image_path: str) -> str:
 
 
 def extract_elements(pdf_path: Path, doc_id: str) -> list:
+    if not _tesseract_available():
+        cmd = _tesseract_cmd or "tesseract"
+        raise RuntimeError(
+            f"Tesseract not found at '{cmd}'. "
+            "Install it (macOS: brew install tesseract; Ubuntu: apt install tesseract-ocr) "
+            "and set TESSERACT_CMD in your .env if it is not on PATH."
+        )
     kwargs: dict = {
         "filename": str(pdf_path),
         "infer_table_structure": True,
         "strategy": "hi_res",
     }
     if _extract_figures_enabled():
-        figures_dir = Path(f"data/figures/{doc_id}/")
+        figures_dir = get_storage_dir() / "figures" / doc_id
         figures_dir.mkdir(parents=True, exist_ok=True)
         kwargs["extract_images_in_pdf"] = True
         kwargs["extract_image_block_output_dir"] = str(figures_dir)
@@ -119,45 +134,7 @@ def extract_elements(pdf_path: Path, doc_id: str) -> list:
     return partition_pdf(**kwargs)
 
 
-def _flush_text_buffer(
-    buf: List[Tuple[int, str]],
-    doc_id: str,
-    source_name: str,
-    contextual: bool,
-    full_doc_text: str,
-    chunk_id: int,
-) -> Tuple[List[Document], int]:
-    if not buf:
-        return [], chunk_id
-
-    page = buf[0][0]
-    combined = "\n\n".join(text for _, text in buf)
-    docs: List[Document] = []
-
-    for c in _SPLITTER.split_text(combined):
-        if not c.strip():
-            continue
-        ref = f"{doc_id}_p{page}_c{chunk_id}"
-        embed_text = (
-            f"{contextualize_chunk(full_doc_text, c)} {c}" if contextual else c
-        )
-        docs.append(
-            Document(
-                page_content=embed_text,
-                metadata={
-                    "doc_id": doc_id,
-                    "ref": ref,
-                    "page": page,
-                    "chunk_id": chunk_id,
-                    "source": source_name,
-                    "element_type": "text",
-                    "original_content": c,
-                },
-            )
-        )
-        chunk_id += 1
-
-    return docs, chunk_id
+_CONTEXTUALIZE_WORKERS = int(os.getenv("CONTEXTUALIZE_WORKERS", "8"))
 
 
 def _build_docs_from_elements(
@@ -167,57 +144,54 @@ def _build_docs_from_elements(
     contextual: bool,
     full_doc_text: str,
 ) -> List[Document]:
-    all_docs: List[Document] = []
+    """Convert parsed elements to Documents, parallelising contextualisation calls."""
+
+    # ── Pass 1: collect raw chunks without contextualisation ─────────────────
+    raw: List[dict] = []
     chunk_id = 0
     figure_count = 0
-    # Accumulate consecutive text elements per page before chunking so the
-    # splitter sees dense prose blocks instead of isolated title/sentence stubs.
     text_buf: List[Tuple[int, str]] = []
     current_page: int = -1
 
-    def flush() -> None:
+    def _flush_buf() -> None:
         nonlocal chunk_id
-        new_docs, chunk_id = _flush_text_buffer(
-            text_buf, doc_id, source_name, contextual, full_doc_text, chunk_id
-        )
-        all_docs.extend(new_docs)
+        if not text_buf:
+            return
+        page = text_buf[0][0]
+        combined = "\n\n".join(t for _, t in text_buf)
+        for c in _SPLITTER.split_text(combined):
+            if not c.strip():
+                continue
+            raw.append({
+                "content": c,
+                "page": page,
+                "chunk_id": chunk_id,
+                "element_type": "text",
+                "image_path": None,
+            })
+            chunk_id += 1
         text_buf.clear()
 
     for el in elements:
         page = el.metadata.page_number or 0
 
         if isinstance(el, Table):
-            # Flush pending text before emitting table
-            flush()
+            _flush_buf()
             current_page = page
             html = getattr(el.metadata, "text_as_html", None) or ""
             md_text = _html_to_markdown(html) if html else _clean_text(el.text or "")
-            if not md_text.strip():
-                continue
-            ref = f"{doc_id}_p{page}_c{chunk_id}"
-            embed_text = (
-                f"{contextualize_chunk(full_doc_text, md_text)} {md_text}"
-                if contextual
-                else md_text
-            )
-            all_docs.append(
-                Document(
-                    page_content=embed_text,
-                    metadata={
-                        "doc_id": doc_id,
-                        "ref": ref,
-                        "page": page,
-                        "chunk_id": chunk_id,
-                        "source": source_name,
-                        "element_type": "table",
-                        "original_content": md_text,
-                    },
-                )
-            )
-            chunk_id += 1
+            if md_text.strip():
+                raw.append({
+                    "content": md_text,
+                    "page": page,
+                    "chunk_id": chunk_id,
+                    "element_type": "table",
+                    "image_path": None,
+                })
+                chunk_id += 1
 
         elif isinstance(el, UnstructuredImage):
-            flush()
+            _flush_buf()
             current_page = page
             if not _extract_figures_enabled() or figure_count >= _MAX_FIGURES:
                 continue
@@ -230,22 +204,13 @@ def _build_docs_from_elements(
             caption = _caption_figure(str(image_path))
             if not caption:
                 continue
-            ref = f"{doc_id}_p{page}_fig{figure_count}"
-            all_docs.append(
-                Document(
-                    page_content=caption,
-                    metadata={
-                        "doc_id": doc_id,
-                        "ref": ref,
-                        "page": page,
-                        "chunk_id": chunk_id,
-                        "source": source_name,
-                        "element_type": "figure",
-                        "image_path": str(image_path),
-                        "original_content": caption,
-                    },
-                )
-            )
+            raw.append({
+                "content": caption,
+                "page": page,
+                "chunk_id": chunk_id,
+                "element_type": "figure",
+                "image_path": str(image_path),
+            })
             chunk_id += 1
             figure_count += 1
 
@@ -253,13 +218,54 @@ def _build_docs_from_elements(
             text = _clean_text(el.text or "")
             if not text:
                 continue
-            # Flush on page change so page metadata stays accurate
             if page != current_page and text_buf:
-                flush()
+                _flush_buf()
             current_page = page
             text_buf.append((page, text))
 
-    flush()
+    _flush_buf()
+
+    if not raw:
+        return []
+
+    # ── Pass 2: contextualise in parallel ─────────────────────────────────────
+    if contextual:
+        contexts: List[str] = [""] * len(raw)
+
+        def _ctx(idx: int) -> Tuple[int, str]:
+            return idx, contextualize_chunk(full_doc_text, raw[idx]["content"])
+
+        with ThreadPoolExecutor(max_workers=_CONTEXTUALIZE_WORKERS) as pool:
+            futures = {pool.submit(_ctx, i): i for i in range(len(raw))}
+            for fut in as_completed(futures):
+                idx, ctx = fut.result()
+                contexts[idx] = ctx
+    else:
+        contexts = [""] * len(raw)
+
+    # ── Pass 3: assemble Documents ────────────────────────────────────────────
+    all_docs: List[Document] = []
+    for item, ctx in zip(raw, contexts):
+        c = item["content"]
+        embed_text = f"{ctx} {c}" if ctx else c
+        ref = (
+            f"{doc_id}_p{item['page']}_fig{item['chunk_id']}"
+            if item["element_type"] == "figure"
+            else f"{doc_id}_p{item['page']}_c{item['chunk_id']}"
+        )
+        meta: dict = {
+            "doc_id": doc_id,
+            "ref": ref,
+            "page": item["page"],
+            "chunk_id": item["chunk_id"],
+            "source": source_name,
+            "element_type": item["element_type"],
+            "original_content": c,
+        }
+        if item["image_path"]:
+            meta["image_path"] = item["image_path"]
+        all_docs.append(Document(page_content=embed_text, metadata=meta))
+
     return all_docs
 
 
@@ -300,8 +306,6 @@ def index_document(
     if not all_docs:
         return 0, DEFAULT_COLLECTION
 
-    emit(f"Built {len(all_docs)} chunks. Generating embeddings…")
+    emit(f"Built {len(all_docs)} chunks. Generating embeddings and storing in pgvector…")
     add_documents(doc_id, all_docs)
-    emit("Building BM25 keyword index…")
-    save_bm25(doc_id, all_docs)
     return len(all_docs), DEFAULT_COLLECTION

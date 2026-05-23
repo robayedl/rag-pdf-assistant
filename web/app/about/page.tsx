@@ -2,14 +2,16 @@ import Nav from "@/components/nav";
 import { Brain, BookOpen, Layers, Zap } from "lucide-react";
 
 const stack = [
-  { layer: "Agent",      tech: "LangGraph + LangChain"                          },
-  { layer: "LLM",        tech: "Google Gemini 2.5 Flash"                        },
-  { layer: "Retrieval",  tech: "ChromaDB + BM25 · Reciprocal Rank Fusion"       },
-  { layer: "Reranking",  tech: "ms-marco-MiniLM-L-6-v2 cross-encoder"           },
-  { layer: "Cache",      tech: "Redis Stack (vector similarity)"                 },
-  { layer: "Parsing",    tech: "unstructured hi_res · Gemini multimodal"         },
-  { layer: "API",        tech: "FastAPI + SSE streaming"                         },
-  { layer: "Frontend",   tech: "Next.js 16 · shadcn/ui · Tailwind CSS"          },
+  { layer: "Agent",      tech: "LangGraph + LangChain"                              },
+  { layer: "LLM",        tech: "Google Gemini 2.5 Flash"                            },
+  { layer: "Retrieval",  tech: "pgvector HNSW + ts_rank FTS · Reciprocal Rank Fusion" },
+  { layer: "Reranking",  tech: "ms-marco-MiniLM-L-6-v2 cross-encoder"               },
+  { layer: "Cache",      tech: "Redis Stack (vector similarity)"                     },
+  { layer: "Parsing",    tech: "unstructured hi_res · Gemini multimodal"             },
+  { layer: "Database",   tech: "PostgreSQL + pgvector"                               },
+  { layer: "Auth",       tech: "Clerk JWT RS256 · per-user document isolation"       },
+  { layer: "API",        tech: "FastAPI + SSE streaming"                             },
+  { layer: "Frontend",   tech: "Next.js 16 · shadcn/ui · Tailwind CSS"              },
 ];
 
 const highlights = [
@@ -57,9 +59,10 @@ export default function AboutPage() {
         <p className="text-muted-foreground leading-relaxed mb-12 max-w-2xl">
           DocuMind is an open-source agentic RAG system that lets you have a
           grounded, citation-backed conversation with any PDF. It combines a
-          LangGraph agent, hybrid vector + keyword search, a cross-encoder
+          LangGraph agent, hybrid pgvector + full-text search, a cross-encoder
           reranker, and Gemini 2.5 Flash to deliver accurate, low-latency
-          answers with real-time streaming.
+          answers with real-time streaming. Each user's documents and chats
+          are fully isolated via Clerk JWT authentication.
         </p>
 
         {/* Highlights */}

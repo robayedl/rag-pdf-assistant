@@ -17,3 +17,4 @@ class GraphState(TypedDict):
     error: str                 # set when a node fails or doc is not indexed
     session_id: str            # for conversation memory (empty string = no memory)
     hyde_triggered: bool       # whether HyDE fired during retrieval
+    top_k: int                 # number of chunks to retrieve after reranking

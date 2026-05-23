@@ -18,8 +18,13 @@ _GRADER_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             "You are a relevance grader. Given a user question and a numbered list of document chunks, "
-            "return a JSON array of 'yes' or 'no' for each chunk indicating whether it is relevant "
-            "to answering the question.\n"
+            "return a JSON array of 'yes' or 'no' for each chunk.\n"
+            "Mark 'yes' if the chunk:\n"
+            "- Directly answers the question, OR\n"
+            "- Contains evidence, definitions, or values the question refers to, OR\n"
+            "- Provides context that helps reason toward the answer.\n"
+            "Only mark 'no' if the chunk is entirely unrelated to the question's topic.\n"
+            "When in doubt, mark 'yes' — it is better to keep a loosely relevant chunk than to discard it.\n"
             "Example output for 3 chunks: [\"yes\", \"no\", \"yes\"]\n"
             "Return only the JSON array, nothing else.",
         ),

@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAuth } from "@clerk/nextjs";
 import { Doc, deleteDoc, indexDocStream, listDocs, uploadDoc } from "@/lib/api";
 
 function formatDate(iso: string) {
@@ -26,6 +27,7 @@ function formatDate(iso: string) {
 
 export default function DocsPage() {
   const router = useRouter();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -37,7 +39,8 @@ export default function DocsPage() {
 
   async function fetchDocs() {
     try {
-      setDocs(await listDocs());
+      const token = await getToken() ?? undefined;
+      setDocs(await listDocs(token));
     } catch {
       toast.error("Could not reach the API. Is the backend running?");
     } finally {
@@ -45,16 +48,17 @@ export default function DocsPage() {
     }
   }
 
-  useEffect(() => { fetchDocs(); }, []);
+  useEffect(() => { if (isLoaded && isSignedIn) fetchDocs(); }, [isLoaded, isSignedIn]);
 
   async function handleUpload() {
     if (!selectedFile) return;
     setUploading(true);
     setIndexingStatus("Uploading…");
+    const token = await getToken() ?? undefined;
     let docId = "";
     let filename = "";
     try {
-      const uploaded = await uploadDoc(selectedFile);
+      const uploaded = await uploadDoc(selectedFile, token);
       docId = uploaded.doc_id;
       filename = uploaded.filename;
     } catch (err) {
@@ -68,6 +72,7 @@ export default function DocsPage() {
     await new Promise<void>((resolve) => {
       indexDocStream(
         docId,
+        token,
         (msg) => setIndexingStatus(msg),
         (_chunks, _index_time_s) => {
           toast.success(`"${filename}" is ready.`);
@@ -92,7 +97,8 @@ export default function DocsPage() {
   async function handleDelete(doc: Doc) {
     if (!confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
     try {
-      await deleteDoc(doc.doc_id);
+      const token = await getToken() ?? undefined;
+      await deleteDoc(doc.doc_id, token);
       setDocs((prev) => prev.filter((d) => d.doc_id !== doc.doc_id));
       toast.success(`"${doc.filename}" deleted.`);
     } catch (err) {
