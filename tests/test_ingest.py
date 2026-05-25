@@ -220,10 +220,12 @@ def test_index_document_normal_path(tmp_path, monkeypatch):
     with patch("rag.ingest.extract_elements", return_value=elements), \
          patch("rag.ingest.clear_document"), \
          patch("rag.ingest.add_documents") as mock_add:
-        count, collection = ingest_mod.index_document(doc_id)
+        count, collection, page_count = ingest_mod.index_document(doc_id)
 
     assert count > 0
     mock_add.assert_called_once()
+    assert collection == "pgvector"
+    assert page_count == 2  # max page number across elements (1 and 2)
 
 
 def test_index_document_raises_when_pdf_missing(tmp_path, monkeypatch):
@@ -231,3 +233,40 @@ def test_index_document_raises_when_pdf_missing(tmp_path, monkeypatch):
     from rag.ingest import index_document
     with pytest.raises(FileNotFoundError):
         index_document("ghost_doc")
+
+
+def test_index_document_zero_page_count_on_empty_elements(tmp_path, monkeypatch):
+    from rag import ingest as ingest_mod
+
+    monkeypatch.setenv("CONTEXTUAL_RETRIEVAL", "false")
+    monkeypatch.setenv("EXTRACT_FIGURES", "false")
+    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
+
+    _dummy_pdf(tmp_path)
+
+    with patch("rag.ingest.extract_elements", return_value=[]), \
+         patch("rag.ingest.clear_document"):
+        count, collection, page_count = ingest_mod.index_document("test123")
+
+    assert count == 0
+    assert page_count == 0
+
+
+def test_index_document_progress_callback(tmp_path, monkeypatch):
+    from rag import ingest as ingest_mod
+
+    monkeypatch.setenv("CONTEXTUAL_RETRIEVAL", "false")
+    monkeypatch.setenv("EXTRACT_FIGURES", "false")
+    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
+
+    _dummy_pdf(tmp_path)
+    messages: list[str] = []
+
+    elements = [make_narrative(SAMPLE_NARRATIVE, page=1)]
+
+    with patch("rag.ingest.extract_elements", return_value=elements), \
+         patch("rag.ingest.clear_document"), \
+         patch("rag.ingest.add_documents"):
+        ingest_mod.index_document("test123", progress=messages.append)
+
+    assert any("Parsing" in m for m in messages)

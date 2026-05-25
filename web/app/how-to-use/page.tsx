@@ -19,9 +19,9 @@ const steps = [
   {
     number: "03",
     icon: DatabaseIcon,
-    title: "Index the document",
-    desc: "Indexing happens automatically after upload. DocuMind parses the PDF into text, tables, and figures, then embeds each chunk into pgvector and builds a BM25 index.",
-    detail: "This step can take 1–3 minutes depending on file size. Chunks are stored in PostgreSQL with HNSW vector indexes and full-text search. The Chat button activates once indexing completes.",
+    title: "Wait for indexing",
+    desc: "After upload the document is queued for background processing. The card shows live progress through five stages: Queued, Parsing, Extracting, Embedding, and Finalizing.",
+    detail: "Indexing can take 1 to 3 minutes depending on file size. You can leave the page and come back — the card updates automatically every two seconds. Use the Stop button to cancel at any time, or Reindex to retry a failed or stopped document. The Chat button activates once indexing completes.",
   },
   {
     number: "04",
@@ -64,7 +64,7 @@ export default function HowToUsePage() {
       <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">How to use DocuMind</h1>
         <p className="text-muted-foreground mb-14">
-          From upload to conversation in four steps.
+          From upload to conversation in five steps.
         </p>
 
         {/* Steps */}
@@ -79,8 +79,8 @@ export default function HowToUsePage() {
               </div>
               <div>
                 <h3 className="font-semibold mb-1">{title}</h3>
-                <p className="text-sm text-foreground/80 mb-2">{desc}</p>
-                <p className="text-xs text-muted-foreground leading-relaxed">{detail}</p>
+                <p className="text-sm text-foreground/80 mb-2 text-justify">{desc}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed text-justify">{detail}</p>
               </div>
             </div>
           ))}
@@ -94,7 +94,7 @@ export default function HowToUsePage() {
           </div>
           <ul className="flex flex-col gap-2">
             {tips.map((tip) => (
-              <li key={tip} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <li key={tip} className="flex items-start gap-2 text-sm text-muted-foreground text-justify">
                 <span className="mt-1.5 size-1.5 rounded-full bg-primary/60 shrink-0" />
                 {tip}
               </li>

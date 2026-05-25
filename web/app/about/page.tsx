@@ -6,7 +6,8 @@ const stack = [
   { layer: "LLM",        tech: "Google Gemini 2.5 Flash"                            },
   { layer: "Retrieval",  tech: "pgvector HNSW + ts_rank FTS · Reciprocal Rank Fusion" },
   { layer: "Reranking",  tech: "ms-marco-MiniLM-L-6-v2 cross-encoder"               },
-  { layer: "Cache",      tech: "Redis Stack (vector similarity)"                     },
+  { layer: "Cache",      tech: "Redis Stack (vector similarity + Celery broker)"     },
+  { layer: "Worker",     tech: "Celery (async PDF ingestion, step-level progress)"   },
   { layer: "Parsing",    tech: "unstructured hi_res · Gemini multimodal"             },
   { layer: "Database",   tech: "PostgreSQL + pgvector"                               },
   { layer: "Auth",       tech: "Clerk JWT RS256 · per-user document isolation"       },
@@ -54,15 +55,13 @@ export default function AboutPage() {
             <Brain className="size-5" />
           </span>
           <h1 className="text-3xl font-bold tracking-tight">About DocuMind</h1>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-primary/25 bg-primary/10 text-primary text-[10px] font-mono font-medium">
+            v2.0.0
+          </span>
         </div>
 
-        <p className="text-muted-foreground leading-relaxed mb-12 max-w-2xl">
-          DocuMind is an open-source agentic RAG system that lets you have a
-          grounded, citation-backed conversation with any PDF. It combines a
-          LangGraph agent, hybrid pgvector + full-text search, a cross-encoder
-          reranker, and Gemini 2.5 Flash to deliver accurate, low-latency
-          answers with real-time streaming. Each user's documents and chats
-          are fully isolated via Clerk JWT authentication.
+        <p className="text-muted-foreground leading-relaxed mb-12 text-justify">
+          DocuMind is an open-source agentic RAG system that lets you have a grounded, citation-backed conversation with any PDF. It combines a LangGraph agent, hybrid pgvector + full-text search, a cross-encoder reranker, and Gemini 2.5 Flash to deliver accurate, low-latency answers with real-time streaming. Each user's documents and chats are fully isolated via Clerk JWT authentication.
         </p>
 
         {/* Highlights */}
@@ -73,7 +72,7 @@ export default function AboutPage() {
                 <Icon className="size-4" />
               </span>
               <h3 className="font-medium text-sm mb-1.5">{title}</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed">{desc}</p>
+              <p className="text-xs text-muted-foreground leading-relaxed text-justify">{desc}</p>
             </div>
           ))}
         </div>
@@ -94,6 +93,23 @@ export default function AboutPage() {
               <span>{tech}</span>
             </div>
           ))}
+        </div>
+
+        {/* Build credit */}
+        <div className="mt-10 pt-6 border-t border-border/50 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground/60">
+          <span>
+            Designed and developed by{" "}
+            <a
+              href="https://www.linkedin.com/in/robayedashraf/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-muted-foreground/80 hover:text-primary transition-colors underline underline-offset-2"
+            >
+              Robayed Ashraf
+            </a>
+            {" "}· AI/ML Engineer
+          </span>
+          <span className="font-mono">DocuMind v2.0.0</span>
         </div>
       </main>
 

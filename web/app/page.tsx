@@ -73,7 +73,7 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="text-base text-muted-foreground max-w-xl mx-auto mb-7"
+            className="text-base text-muted-foreground max-w-xl mx-auto mb-7 text-justify"
           >
             Chat with any PDF using a production-grade pipeline — hybrid search,
             semantic caching, hallucination checking, and real-time streaming.
@@ -115,7 +115,7 @@ export default function LandingPage() {
                   </span>
                   <h3 className="font-medium text-sm">{title}</h3>
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{desc}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed text-justify">{desc}</p>
               </motion.div>
             ))}
           </motion.div>
