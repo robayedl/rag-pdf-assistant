@@ -52,6 +52,27 @@ services:
       retries: 10
       start_period: 120s
 
+  worker:
+    build: .
+    command: celery -A worker.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: docker
+      STORAGE_DIR: /app/storage
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://documind:documind@postgres:5432/documind
+    volumes:
+      - ./storage:/app/storage
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   web:
     build:
       context: ./web

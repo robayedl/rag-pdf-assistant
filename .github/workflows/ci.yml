@@ -74,11 +74,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Apply DB migrations
-        run: |
-          PGPASSWORD=documind psql -h localhost -U documind -d documind -f legacy/migrations/001_init.sql
-          PGPASSWORD=documind psql -h localhost -U documind -d documind -f legacy/migrations/002_pgvector.sql
-
       - name: Run tests
         run: pytest -q
 

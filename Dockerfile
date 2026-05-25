@@ -25,11 +25,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY . .
 
-RUN mkdir -p storage/pdfs chroma_db data/figures
+RUN mkdir -p storage/pdfs
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 ENV ENVIRONMENT=docker
-ENV CHROMA_DIR=/app/chroma_db
 ENV STORAGE_DIR=/app/storage
 
 EXPOSE 8000

@@ -30,6 +30,8 @@ from langchain_core.documents import Document
 
 from sqlalchemy import text
 
+import redis as _redis_mod
+
 from app.auth import ClerkUser, current_user
 from app.db import engine, get_db
 from app.models import Base, Document as DocModel, User
@@ -41,6 +43,19 @@ from rag.llm import get_embeddings, get_llm
 from rag.store import clear_document
 
 APP_ENV = os.getenv("ENVIRONMENT", "local")
+
+_redis_client = _redis_mod.from_url(
+    os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+)
+
+
+def _get_progress(doc_id: str) -> int:
+    val = _redis_client.get(f"doc:{doc_id}:progress")
+    return int(val) if val else 0
+
+
+def _get_step(doc_id: str) -> str | None:
+    return _redis_client.get(f"doc:{doc_id}:step")
 
 
 async def _init_db() -> None:
@@ -160,6 +175,7 @@ class HealthResponse(BaseModel):
 class UploadResponse(BaseModel):
     doc_id: str
     filename: str
+    status: str = "pending"
 
 
 class IndexResponse(BaseModel):
@@ -198,8 +214,19 @@ class DocRecord(BaseModel):
     doc_id: str
     filename: str
     uploaded_at: str
+    status: str
     indexed: bool
     index_time_s: Optional[float] = None
+    page_count: Optional[int] = None
+    progress_percent: int = 0
+    step: Optional[str] = None
+
+
+class DocStatusResponse(BaseModel):
+    status: str
+    progress_percent: int
+    page_count: Optional[int] = None
+    step: Optional[str] = None
 
 
 class StreamQueryRequest(BaseModel):
@@ -234,8 +261,17 @@ async def list_documents(
             doc_id=str(doc.id),
             filename=doc.filename,
             uploaded_at=doc.created_at.isoformat(),
+            status=doc.status,
             indexed=doc.status == "indexed",
             index_time_s=doc.index_time_s,
+            page_count=doc.page_count,
+            progress_percent=(
+                _get_progress(str(doc.id)) if doc.status == "processing"
+                else (100 if doc.status == "indexed" else 0)
+            ),
+            step=(
+                _get_step(str(doc.id)) if doc.status == "processing" else None
+            ),
         )
         for doc in docs
     ]
@@ -261,12 +297,17 @@ async def upload_document(
         id=uuid.UUID(doc_id),
         user_id=user.user_id,
         filename=file.filename,
-        status="uploaded",
+        status="pending",
     )
     db.add(doc)
     await db.commit()
 
-    return UploadResponse(doc_id=doc_id, filename=file.filename)
+    from worker.tasks import ingest_document as _enqueue_ingest
+    task = _enqueue_ingest.delay(doc_id)
+    doc.celery_task_id = task.id
+    await db.commit()
+
+    return UploadResponse(doc_id=doc_id, filename=file.filename, status="pending")
 
 
 @app.post("/documents/{doc_id}/index", response_model=IndexResponse)
@@ -279,11 +320,12 @@ async def index(
     doc = await _get_doc_or_404(db, doc_id, user.user_id)
 
     t0 = time.perf_counter()
-    chunks_indexed, collection_name = index_document(doc_id)
+    chunks_indexed, collection_name, page_count = index_document(doc_id)
     index_time_s = time.perf_counter() - t0
 
     doc.status = "indexed"
     doc.index_time_s = round(index_time_s, 1)
+    doc.page_count = page_count
     await db.commit()
 
     return IndexResponse(
@@ -328,7 +370,7 @@ async def index_stream(
             yield _sse(event, data)
 
         try:
-            chunks_indexed, _ = await future
+            chunks_indexed, _, page_count = await future
         except Exception as e:
             yield _sse("error", str(e))
             return
@@ -342,11 +384,112 @@ async def index_stream(
             if d:
                 d.status = "indexed"
                 d.index_time_s = round(index_time_s, 1)
+                d.page_count = page_count
                 await sess.commit()
 
         yield _sse("done", json.dumps({"chunks": chunks_indexed, "index_time_s": round(index_time_s, 1)}))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/documents/{doc_id}/status", response_model=DocStatusResponse)
+async def get_document_status(
+    doc_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocStatusResponse:
+    await _ensure_user(db, user)
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    result = await db.execute(
+        select(DocModel).where(DocModel.id == doc_uuid, DocModel.user_id == user.user_id)
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.status == "processing":
+        progress = _get_progress(doc_id)
+        step = _get_step(doc_id)
+    elif doc.status == "indexed":
+        progress = 100
+        step = None
+    else:
+        progress = 0
+        step = None
+
+    return DocStatusResponse(
+        status=doc.status,
+        progress_percent=progress,
+        page_count=doc.page_count,
+        step=step,
+    )
+
+
+@app.post("/documents/{doc_id}/stop", status_code=200)
+async def stop_document(
+    doc_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await _ensure_user(db, user)
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    result = await db.execute(
+        select(DocModel).where(DocModel.id == doc_uuid, DocModel.user_id == user.user_id)
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if doc.status not in ("pending", "processing"):
+        raise HTTPException(status_code=400, detail="Document is not active.")
+
+    if doc.celery_task_id:
+        from worker.celery_app import celery_app as _celery
+        try:
+            _celery.control.revoke(doc.celery_task_id, terminate=True, signal="SIGTERM")
+        except Exception:
+            pass
+
+    doc.status = "stopped"
+    await db.commit()
+    return {"status": "stopped"}
+
+
+@app.post("/documents/{doc_id}/reindex", status_code=200)
+async def reindex_document(
+    doc_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await _ensure_user(db, user)
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    result = await db.execute(
+        select(DocModel).where(DocModel.id == doc_uuid, DocModel.user_id == user.user_id)
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if not pdf_path(doc_id).exists():
+        raise HTTPException(status_code=404, detail="Document file not found.")
+
+    doc.status = "pending"
+    doc.error_message = None
+    await db.commit()
+
+    from worker.tasks import ingest_document as _enqueue_ingest
+    task = _enqueue_ingest.delay(doc_id)
+    doc.celery_task_id = task.id
+    await db.commit()
+
+    return {"status": "pending", "doc_id": doc_id}
 
 
 @app.delete("/documents/{doc_id}", status_code=204)

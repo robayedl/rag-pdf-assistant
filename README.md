@@ -13,7 +13,7 @@
 
 ## Demo
 
-https://github.com/user-attachments/assets/290e7caf-6676-43c2-9f9f-9df63d28c3f9
+https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
 
 ---
 
@@ -32,7 +32,8 @@ https://github.com/user-attachments/assets/290e7caf-6676-43c2-9f9f-9df63d28c3f9
 | **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
 | **Rich PDF Parsing** | Table extraction (Markdown) and figure captioning via Gemini multimodal |
 | **Auth** | Clerk — Google + email sign-in, per-user document isolation, JWT validation |
-| **Postgres + pgvector** | All metadata and embeddings in one Postgres instance; migrations in `migrations/` |
+| **Background Ingestion** | Celery worker processes PDFs asynchronously — UI polls with live step-by-step progress (Queued → Parsing → Extracting → Embedding → Finalizing) |
+| **Postgres + pgvector** | All metadata and embeddings in one Postgres instance |
 | **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall |
 
 ---
@@ -79,7 +80,8 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    PDF([PDF]) --> UP[unstructured\nhi_res]
+    PDF([PDF Upload]) --> Q[Celery Queue\nRed·is broker]
+    Q --> UP[unstructured\nhi_res]
     UP --> T[Tables → Markdown\nchunk]
     UP --> F[Figures → Gemini\nVision caption]
     UP --> TX[Text → 800-token\nchunks]
@@ -104,7 +106,8 @@ flowchart LR
 | **Vector Store** | PostgreSQL + pgvector (HNSW cosine) + `ts_rank` full-text (hybrid) |
 | **Database** | PostgreSQL (Supabase or self-hosted via Docker) |
 | **Auth** | Clerk (Google + email, JWT/RS256) |
-| **Cache** | Redis Stack (vector similarity) |
+| **Cache** | Redis Stack (vector similarity + Celery broker/backend) |
+| **Background Workers** | Celery — async PDF ingestion queue |
 | **PDF Parsing** | unstructured (hi_res), Gemini 2.5 Flash multimodal |
 | **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS — UI designed with Claude Code |
 | **Evaluation** | RAGAS |
@@ -143,11 +146,12 @@ docker compose up --build
 
 > The first build downloads ML models (~2 GB) and may take several minutes. Tables and indexes are created automatically on first startup.
 
-| Service | URL |
+| Service | URL / Notes |
 |---|---|
 | UI | http://localhost:3000 |
 | API | http://localhost:8000 |
 | API Docs | http://localhost:8000/docs |
+| Worker | Background Celery process — no HTTP port, connects to Redis + Postgres |
 
 ### Option 2 — Local
 
@@ -177,6 +181,11 @@ make run   # API on :8000
 ```
 
 ```bash
+# In a separate terminal — Celery background worker
+celery -A worker.celery_app worker --loglevel=info
+```
+
+```bash
 cd web && npm install && npm run dev   # UI on :3000
 ```
 
@@ -201,9 +210,13 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | Health check (no auth) |
-| `GET` | `/documents` | List current user's documents |
-| `POST` | `/documents` | Upload a PDF, returns `doc_id` |
-| `POST` | `/documents/{doc_id}/index/stream` | Parse, chunk, index — SSE progress |
+| `GET` | `/documents` | List current user's documents (includes `status`, `progress_percent`, `page_count`) |
+| `POST` | `/documents` | Upload a PDF — enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
+| `GET` | `/documents/{doc_id}/status` | Poll ingestion status: `{status, progress_percent, step, page_count}` |
+| `POST` | `/documents/{doc_id}/stop` | Cancel a pending or processing ingestion job |
+| `POST` | `/documents/{doc_id}/reindex` | Re-enqueue a stopped or failed document |
+| `DELETE` | `/documents/{doc_id}` | Delete a document, its chunks, and its PDF file |
+| `POST` | `/documents/{doc_id}/index/stream` | Manual re-index with SSE progress (for debugging) |
 | `GET` | `/documents/{doc_id}/file` | Download the original PDF |
 | `POST` | `/query/stream` | Ask a question — SSE streaming tokens + citations |
 
@@ -251,6 +264,9 @@ documind/
 │   ├── models.py         # ORM models: User, Document, Conversation, Message
 │   ├── storage.py        # File-system helpers (PDF read/write)
 │   └── main.py           # FastAPI routes
+├── worker/
+│   ├── celery_app.py     # Celery app config (broker = Redis)
+│   └── tasks.py          # ingest_document task: pending → processing → indexed / failed / stopped
 ├── rag/
 │   ├── agents/           # LangGraph nodes: router, grader, generator, rewriter
 │   ├── chains/           # Retrieval (pgvector + ts_rank + HyDE), reranking, generation
@@ -258,7 +274,7 @@ documind/
 │   ├── cache.py          # Redis semantic cache
 │   └── ingest.py         # PDF parsing — text, tables, figures
 ├── legacy/
-│   ├── migrations/       # SQL applied once at DB init (001_init, 002_pgvector)
+│   ├── migrations/       # Reference SQL for initial schema (001_init, 002_pgvector)
 │   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
 │   └── streamlit/        # Previous Streamlit UI (kept for reference)
 ├── web/                  # Next.js 16 frontend (App Router, shadcn/ui, Clerk)

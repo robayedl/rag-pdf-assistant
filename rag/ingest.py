@@ -272,7 +272,7 @@ def _build_docs_from_elements(
 def index_document(
     doc_id: str,
     progress: Callable[[str], None] | None = None,
-) -> Tuple[int, str]:
+) -> Tuple[int, str, int]:
     def emit(msg: str) -> None:
         if progress:
             progress(msg)
@@ -288,6 +288,7 @@ def index_document(
 
     emit("Parsing PDF with hi_res layout analysis…")
     elements = extract_elements(pdf_path, doc_id)
+    page_count = max((el.metadata.page_number or 0) for el in elements) if elements else 0
     emit(f"Parsed {len(elements)} elements. Building document chunks…")
 
     full_doc_text = (
@@ -304,8 +305,8 @@ def index_document(
     )
 
     if not all_docs:
-        return 0, DEFAULT_COLLECTION
+        return 0, DEFAULT_COLLECTION, page_count
 
     emit(f"Built {len(all_docs)} chunks. Generating embeddings and storing in pgvector…")
     add_documents(doc_id, all_docs)
-    return len(all_docs), DEFAULT_COLLECTION
+    return len(all_docs), DEFAULT_COLLECTION, page_count

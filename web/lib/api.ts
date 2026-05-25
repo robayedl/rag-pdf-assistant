@@ -4,13 +4,25 @@ export interface Doc {
   doc_id: string;
   filename: string;
   uploaded_at: string;
+  status: string;
   indexed: boolean;
   index_time_s?: number;
+  page_count?: number;
+  progress_percent: number;
+  step?: string;
 }
 
 export interface UploadResponse {
   doc_id: string;
   filename: string;
+  status: string;
+}
+
+export interface DocStatusResponse {
+  status: string;
+  progress_percent: number;
+  page_count?: number;
+  step?: string;
 }
 
 export interface IndexResponse {
@@ -63,6 +75,30 @@ export async function deleteDoc(docId: string, token?: string): Promise<void> {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error("Failed to delete document");
+}
+
+export async function stopDoc(docId: string, token?: string): Promise<void> {
+  const res = await fetch(`${API_URL}/documents/${docId}/stop`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to stop document");
+}
+
+export async function reindexDoc(docId: string, token?: string): Promise<void> {
+  const res = await fetch(`${API_URL}/documents/${docId}/reindex`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to reindex document");
+}
+
+export async function getDocStatus(docId: string, token?: string): Promise<DocStatusResponse> {
+  const res = await fetch(`${API_URL}/documents/${docId}/status`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to fetch document status");
+  return res.json();
 }
 
 export function indexDocStream(
