@@ -16,10 +16,11 @@ from app.models import Document as DocModel
 
 @pytest.fixture(autouse=True)
 def _skip_db_init(monkeypatch):
-    """Prevent lifespan from connecting to Postgres during unit tests."""
+    """Prevent lifespan from connecting to Postgres or downloading ML models."""
     async def _noop():
         pass
     monkeypatch.setattr("app.main._init_db", _noop)
+    monkeypatch.setattr("app.main.get_embeddings", MagicMock)
 
 TEST_USER = ClerkUser(user_id="test_user", email="test@test.com")
 

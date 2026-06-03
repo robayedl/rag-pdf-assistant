@@ -16,6 +16,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install ruff
         run: pip install ruff
@@ -58,6 +59,7 @@ jobs:
       DATABASE_URL: postgresql://documind:documind@localhost:5432/documind
       REDIS_URL: redis://localhost:6379
       GOOGLE_API_KEY: fake-key-for-tests
+      CLERK_JWT_KEY: fake-clerk-key-for-tests
       ANONYMIZED_TELEMETRY: "false"
       TOKENIZERS_PARALLELISM: "false"
 
@@ -68,11 +70,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-all-mpnet-base-v2-cross-encoder
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Download ML models
+        run: python -c "from rag.llm import get_embeddings; get_embeddings()"
 
       - name: Run tests
         run: pytest -q
