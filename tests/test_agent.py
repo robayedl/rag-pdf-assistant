@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
@@ -14,7 +14,6 @@ def _make_state(**kwargs):
         "documents": [],
         "doc_id": "test_doc",
         "retry_count": 0,
-        "route": "",
         "grounded": False,
         "error": "",
         "session_id": "",
@@ -28,29 +27,6 @@ def _fake_doc(content="Some relevant content."):
         page_content=content,
         metadata={"doc_id": "test_doc", "ref": "ref1", "page": 1, "chunk_id": 0, "source": "test.pdf"},
     )
-
-
-# Router tests
-
-def test_router_routes_greeting():
-    from rag.agents.router import route_query
-
-    result = route_query(_make_state(question="hello"))
-    assert result["route"] == "direct"
-
-
-def test_router_routes_document_question():
-    from rag.agents.router import route_query
-
-    result = route_query(_make_state(question="What are the technical skills listed?"))
-    assert result["route"] == "retrieve"
-
-
-def test_router_falls_back_to_retrieve_on_error():
-    from rag.agents.router import route_query
-
-    result = route_query(_make_state(question="anything"))
-    assert result["route"] == "retrieve"
 
 
 # Grader tests
@@ -85,17 +61,16 @@ def test_grader_keeps_all_docs_on_llm_error():
 # Hallucination checker tests
 
 def test_hallucination_checker_catches_ungrounded_answer():
-    from rag.agents.hallucination import check_hallucination, GroundednessScore
+    from rag.agents.hallucination import check_hallucination, GroundednessScore  # noqa: F401
+    from langchain_core.messages import AIMessage
 
     state = _make_state(
         documents=[_fake_doc("The sky is blue.")],
         generation="The sky is green and made of cheese.",
         retry_count=0,
     )
-    mock_llm = MagicMock()
-    mock_llm.with_structured_output.return_value = RunnableLambda(
-        lambda x: GroundednessScore(grounded="no")
-    )
+    # Use RunnableLambda so the chain step receives/returns proper objects
+    mock_llm = RunnableLambda(lambda _: AIMessage(content="no"))
     with patch("rag.agents.hallucination.get_llm", return_value=mock_llm):
         result = check_hallucination(state)
 
@@ -105,16 +80,14 @@ def test_hallucination_checker_catches_ungrounded_answer():
 
 
 def test_hallucination_checker_passes_grounded_answer():
-    from rag.agents.hallucination import check_hallucination, GroundednessScore
+    from rag.agents.hallucination import check_hallucination, GroundednessScore  # noqa: F401
+    from langchain_core.messages import AIMessage
 
     state = _make_state(
         documents=[_fake_doc("The sky is blue.")],
         generation="According to the document, the sky is blue.",
     )
-    mock_llm = MagicMock()
-    mock_llm.with_structured_output.return_value = RunnableLambda(
-        lambda x: GroundednessScore(grounded="yes")
-    )
+    mock_llm = RunnableLambda(lambda _: AIMessage(content="yes"))
     with patch("rag.agents.hallucination.get_llm", return_value=mock_llm):
         result = check_hallucination(state)
 
@@ -183,8 +156,7 @@ def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
     from rag.agents.graph import build_graph
     fake_doc = _fake_doc("Python is a programming language.")
 
-    with patch("rag.agents.graph.route_query", return_value={"route": "retrieve"}), \
-         patch("rag.agents.graph.retrieve", return_value={"documents": [fake_doc], "hyde_triggered": False}), \
+    with patch("rag.agents.graph.retrieve", return_value={"documents": [fake_doc], "hyde_triggered": False}), \
          patch("rag.agents.graph.grade_documents", return_value={"documents": [fake_doc]}), \
          patch("rag.agents.graph.generate", return_value={"generation": "Python is a language."}), \
          patch("rag.agents.graph.check_hallucination", return_value={"grounded": True}):

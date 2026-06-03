@@ -1,4 +1,4 @@
-# DocuMind — Agentic Document Intelligence
+# DocuMind: Agentic Document Intelligence
 
 > Chat with any PDF using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, real-time streaming, Clerk auth, and Postgres + pgvector storage.
 
@@ -21,19 +21,23 @@ https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
 
 | Feature | Description |
 |---|---|
-| **Agentic RAG** | LangGraph pipeline with routing, grading, rewriting, and hallucination checking |
+| **Agentic RAG** | LangGraph pipeline with grading, query rewriting, and hallucination checking |
 | **Hybrid Search** | Dense pgvector (HNSW cosine) + sparse PostgreSQL `ts_rank` fused with Reciprocal Rank Fusion (RRF) |
 | **Cross-Encoder Reranking** | `ms-marco-MiniLM-L-6-v2` reranker for high-precision results |
-| **Semantic Cache** | Redis vector cache — repeated or near-identical queries return instantly |
+| **Semantic Cache** | Redis vector cache; repeated or near-identical queries return instantly |
 | **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves |
 | **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency answers |
-| **Streaming Responses** | Server-Sent Events (SSE) for real-time token-by-token output with stop/cancel support |
+| **Streaming Responses** | Server-Sent Events (SSE) for real-time token-by-token output with stop/cancel support; answers persist to Postgres even if client disconnects mid-stream |
+| **Conversation Recovery** | Navigating away or refreshing mid-query recovers the answer automatically, cost and token count restored from DB |
 | **Conversation Memory** | Per-session chat history maintained across turns |
 | **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
 | **Rich PDF Parsing** | Table extraction (Markdown) and figure captioning via Gemini multimodal |
-| **Auth** | Clerk — Google + email sign-in, per-user document isolation, JWT validation |
-| **Background Ingestion** | Celery worker processes PDFs asynchronously — UI polls with live step-by-step progress (Queued → Parsing → Extracting → Embedding → Finalizing) |
+| **Auth** | Clerk: Google + email sign-in, per-user document isolation, JWT validation |
+| **Background Ingestion** | Celery worker processes PDFs asynchronously; UI polls with live step-by-step progress (Queued → Parsing → Extracting → Embedding → Finalizing) |
 | **Postgres + pgvector** | All metadata and embeddings in one Postgres instance |
+| **Cost Tracking** | Per-query token + AUD cost recorded on every assistant message; cost badge per message + hourly spend in chat header; `/usage` dashboard with request/token charts and hourly, daily, weekly, monthly, all-time views |
+| **Rate Limiting** | Redis token-bucket: 30 req/hr, 200 req/day per user; HTTP 429 + `Retry-After`; frontend toast with countdown |
+| **PII Redaction** | Presidio-powered: EMAIL, PHONE, SSN, CREDIT_CARD, PERSON redacted from user query before agent; restored in final answer; opt-in via `PII_REDACTION=true` |
 | **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall |
 
 ---
@@ -47,19 +51,14 @@ flowchart TD
     Q([User Question]) --> SC{Semantic Cache?}
 
     SC -->|hit| CR([Return Cached Response])
-    SC -->|miss| RT[Router]
+    SC -->|miss| RET[Hybrid Retrieval\npgvector + ts_rank + RRF]
 
-    RT -->|greeting| DA[Direct Response]
-    DA --> E1([END])
-
-    RT -->|document question| RET[Hybrid Retrieval\npgvector + ts_rank + RRF]
     RET --> RR[Cross-Encoder Rerank]
     RR --> HY{Score < HyDE\nThreshold?}
 
     HY -->|yes| HD[HyDE: Generate\nHypothetical Passage]
-    HD --> RE2[Re-retrieve + RRF merge]
-    RE2 --> RR2[Re-rank]
-    RR2 --> GD
+    HD --> RE2[Re-retrieve + RRF\nmerge + Re-rank]
+    RE2 --> GD
 
     HY -->|no| GD[Grade Documents]
 
@@ -107,9 +106,9 @@ flowchart LR
 | **Database** | PostgreSQL (Supabase or self-hosted via Docker) |
 | **Auth** | Clerk (Google + email, JWT/RS256) |
 | **Cache** | Redis Stack (vector similarity + Celery broker/backend) |
-| **Background Workers** | Celery — async PDF ingestion queue |
+| **Background Workers** | Celery: async PDF ingestion queue |
 | **PDF Parsing** | unstructured (hi_res), Gemini 2.5 Flash multimodal |
-| **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS — UI designed with Claude Code |
+| **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS |
 | **Evaluation** | RAGAS |
 | **CI/CD** | GitHub Actions, Docker |
 
@@ -122,9 +121,9 @@ flowchart LR
 - Docker & Docker Compose
 - A [Clerk](https://clerk.com) account (free tier works)
 - A Google AI Studio API key
-- A Postgres instance — the `docker-compose.yml` spins one up automatically with pgvector
+- A Postgres instance; the `docker-compose.yml` spins one up automatically with pgvector
 
-### Option 1 — Docker (Recommended)
+### Option 1: Docker (Recommended)
 
 ```bash
 git clone https://github.com/robayedl/documind.git
@@ -151,9 +150,9 @@ docker compose up --build
 | UI | http://localhost:3000 |
 | API | http://localhost:8000 |
 | API Docs | http://localhost:8000/docs |
-| Worker | Background Celery process — no HTTP port, connects to Redis + Postgres |
+| Worker | Background Celery process (no HTTP port, connects to Redis + Postgres) |
 
-### Option 2 — Local
+### Option 2: Local
 
 ```bash
 git clone https://github.com/robayedl/documind.git
@@ -181,7 +180,7 @@ make run   # API on :8000
 ```
 
 ```bash
-# In a separate terminal — Celery background worker
+# In a separate terminal: Celery background worker
 celery -A worker.celery_app worker --loglevel=info
 ```
 
@@ -194,10 +193,10 @@ cd web && npm install && npm run dev   # UI on :3000
 ## Auth Setup (Clerk)
 
 1. Create an app at [clerk.com](https://clerk.com) and enable **Google** and **Email** sign-in.
-2. Go to **API Keys** — copy **Publishable Key** → `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in both `.env` and `web/.env.local`
+2. Go to **API Keys**: copy **Publishable Key** → `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in both `.env` and `web/.env.local`
 3. Copy **Secret Key** → `CLERK_SECRET_KEY` in both `.env` (used by Docker web container) and `web/.env.local` (used in local dev)
 4. Go to **JWT Templates → Default** → copy the **PEM public key** → `CLERK_JWT_KEY` in `.env` (wrap in double quotes)
-5. Development keys (`pk_test_*`) automatically whitelist `localhost` — no domain configuration needed.
+5. Development keys (`pk_test_*`) automatically whitelist `localhost`; no domain configuration needed.
 
 > In local dev without `CLERK_JWT_KEY`, the backend auto-creates a `dev_user` identity so you can test without signing in.
 
@@ -211,14 +210,17 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 |---|---|---|
 | `GET` | `/health` | Health check (no auth) |
 | `GET` | `/documents` | List current user's documents (includes `status`, `progress_percent`, `page_count`) |
-| `POST` | `/documents` | Upload a PDF — enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
+| `POST` | `/documents` | Upload a PDF; enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
 | `GET` | `/documents/{doc_id}/status` | Poll ingestion status: `{status, progress_percent, step, page_count}` |
 | `POST` | `/documents/{doc_id}/stop` | Cancel a pending or processing ingestion job |
 | `POST` | `/documents/{doc_id}/reindex` | Re-enqueue a stopped or failed document |
 | `DELETE` | `/documents/{doc_id}` | Delete a document, its chunks, and its PDF file |
 | `POST` | `/documents/{doc_id}/index/stream` | Manual re-index with SSE progress (for debugging) |
 | `GET` | `/documents/{doc_id}/file` | Download the original PDF |
-| `POST` | `/query/stream` | Ask a question — SSE streaming tokens + citations |
+| `POST` | `/query/stream` | Ask a question; SSE streaming tokens + citations; answer + cost persisted to DB regardless of client disconnect |
+| `GET` | `/conversations/{session_id}` | Fetch persisted messages for a session (used for client-side recovery after navigation) |
+| `GET` | `/usage/me?period=` | Token and AUD cost summary for a given period (`1h`, `24h`, `7d`, `30d`, `all`); defaults to `all` |
+| `GET` | `/usage/me/history?period=` | Time-series data points (bucket, tokens, requests, cost) for charting; granularity varies by period |
 
 ---
 
@@ -228,10 +230,10 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 
 | Variable | Default | Description |
 |---|---|---|
-| `GOOGLE_API_KEY` | — | **Required.** Google AI Studio API key |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk publishable key (baked into web build) |
-| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key (passed to web container at runtime) |
-| `CLERK_JWT_KEY` | — | **Required in prod.** RSA public key for JWT validation (PEM, quoted) |
+| `GOOGLE_API_KEY` | - | **Required.** Google AI Studio API key |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | - | **Required.** Clerk publishable key (baked into web build) |
+| `CLERK_SECRET_KEY` | - | **Required.** Clerk secret key (passed to web container at runtime) |
+| `CLERK_JWT_KEY` | - | **Required in prod.** RSA public key for JWT validation (PEM, quoted) |
 | `DATABASE_URL` | `postgresql://documind:documind@localhost:5432/documind` | Postgres connection string |
 | `STORAGE_DIR` | `./storage` | Directory for uploaded PDFs and figures |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
@@ -243,13 +245,16 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 | `CONTEXTUAL_RETRIEVAL` | `true` | Prepend per-chunk context before embedding |
 | `CONTEXTUALIZE_WORKERS` | `8` | Parallel LLM workers for contextual retrieval during indexing |
 | `TESSERACT_CMD` | _(PATH)_ | Full path to `tesseract` binary |
+| `RATE_LIMIT_PER_HOUR` | `30` | Max chat queries per user per hour |
+| `RATE_LIMIT_PER_DAY` | `200` | Max chat queries per user per day |
+| `PII_REDACTION` | `true` | Enable Presidio PII redaction on user queries (`true`/`false`) |
 
 **Frontend** (`web/.env.local`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk frontend publishable key |
-| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key (server-side auth) |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | - | **Required.** Clerk frontend publishable key |
+| `CLERK_SECRET_KEY` | - | **Required.** Clerk secret key (server-side auth) |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL for the frontend |
 
 ---
@@ -262,26 +267,29 @@ documind/
 │   ├── auth.py           # Clerk JWT validation (FastAPI dependency)
 │   ├── db.py             # SQLAlchemy async engine + session factory
 │   ├── models.py         # ORM models: User, Document, Conversation, Message
+│   ├── pricing.py        # Model cost table + compute_cost()
+│   ├── ratelimit.py      # Redis token-bucket rate limiter
+│   ├── redact.py         # Presidio PII redaction / restore
 │   ├── storage.py        # File-system helpers (PDF read/write)
 │   └── main.py           # FastAPI routes
 ├── worker/
 │   ├── celery_app.py     # Celery app config (broker = Redis)
 │   └── tasks.py          # ingest_document task: pending → processing → indexed / failed / stopped
 ├── rag/
-│   ├── agents/           # LangGraph nodes: router, grader, generator, rewriter
+│   ├── agents/           # LangGraph nodes: grader, generator, rewriter, hallucination check
 │   ├── chains/           # Retrieval (pgvector + ts_rank + HyDE), reranking, generation
 │   ├── store.py          # pgvector CRUD (add, search, clear)
 │   ├── cache.py          # Redis semantic cache
-│   └── ingest.py         # PDF parsing — text, tables, figures
+│   └── ingest.py         # PDF parsing: text, tables, figures
+├── migrations/           # SQL migrations: 001_init, 002_pgvector, 003_cost
 ├── legacy/
-│   ├── migrations/       # Reference SQL for initial schema (001_init, 002_pgvector)
 │   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
 │   └── streamlit/        # Previous Streamlit UI (kept for reference)
 ├── web/                  # Next.js 16 frontend (App Router, shadcn/ui, Clerk)
-│   ├── app/              # Pages: /, /chat, /docs, /login, /about, /how-to-use
-│   ├── components/       # Nav (with UserButton), PdfPane, shadcn primitives
+│   ├── app/              # Pages: /, /chat, /docs, /usage, /login, /about, /how-to-use
+│   ├── components/       # Nav, PdfPane, DocWatcher (global bg poller), shadcn primitives
 │   ├── lib/              # Typed API client with auth headers (api.ts)
-│   └── middleware.ts     # Clerk route protection for /chat and /docs
+│   └── proxy.ts          # Clerk route protection for /chat, /docs, and /usage
 ├── eval/                 # RAGAS runner and golden dataset
 └── tests/                # Python backend tests
 ```
@@ -322,4 +330,4 @@ make lint
 
 ## License
 
-MIT — free to use, modify, and distribute.
+MIT: free to use, modify, and distribute.

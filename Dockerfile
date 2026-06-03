@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim
+# Use Bookworm variant for latest Debian security patches.
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends \
     curl \
     tesseract-ocr \
     poppler-utils \
@@ -22,6 +24,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system opencv-python-headless
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r requirements.txt
+
+RUN python -m spacy download en_core_web_lg
 
 COPY . .
 

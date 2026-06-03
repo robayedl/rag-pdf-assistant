@@ -16,7 +16,7 @@ from rag.llm import get_embeddings
 
 logger = logging.getLogger(__name__)
 
-# v2: added doc_id TagField — bump name so existing index is replaced on next start
+# v2: added doc_id TagField; bump name so existing index is replaced on next start
 _INDEX_NAME = "semantic_cache_v2_idx"
 _KEY_PREFIX = "cache:"
 _VECTOR_DIM = 768

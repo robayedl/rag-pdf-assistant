@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Double, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Double, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -32,9 +32,11 @@ class Document(Base):
     status:        Mapped[str]          = mapped_column(String, default="uploaded")
     page_count:    Mapped[int | None]   = mapped_column(Integer, nullable=True)
     index_time_s:  Mapped[float | None] = mapped_column(Double, nullable=True)
-    error_message:   Mapped[str | None]   = mapped_column(Text, nullable=True)
-    celery_task_id:  Mapped[str | None]   = mapped_column(String, nullable=True)
-    created_at:      Mapped[datetime]     = mapped_column(DateTime(timezone=True), server_default=func.now())
+    error_message:        Mapped[str | None]   = mapped_column(Text, nullable=True)
+    celery_task_id:       Mapped[str | None]   = mapped_column(String, nullable=True)
+    stopped_at_progress:  Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    stopped_at_step:      Mapped[str | None]   = mapped_column(String, nullable=True)
+    created_at:           Mapped[datetime]     = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user:          Mapped[User]           = relationship(back_populates="documents")
     conversations: Mapped[list[Conversation]] = relationship(back_populates="document")
@@ -62,6 +64,9 @@ class Message(Base):
     role:            Mapped[str]          = mapped_column(String, nullable=False)
     content:         Mapped[str]          = mapped_column(Text, nullable=False)
     citations:       Mapped[dict | None]  = mapped_column(JSONB, nullable=True)
+    tokens_in:       Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    tokens_out:      Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    cost_usd:        Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at:      Mapped[datetime]     = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

@@ -272,10 +272,15 @@ def _build_docs_from_elements(
 def index_document(
     doc_id: str,
     progress: Callable[[str], None] | None = None,
+    on_pct: Callable[[int], None] | None = None,
 ) -> Tuple[int, str, int]:
     def emit(msg: str) -> None:
         if progress:
             progress(msg)
+
+    def pct(n: int) -> None:
+        if on_pct:
+            on_pct(n)
 
     pdf_path = get_pdf_path(doc_id)
     if not pdf_path.exists():
@@ -289,6 +294,9 @@ def index_document(
     emit("Parsing PDF with hi_res layout analysis…")
     elements = extract_elements(pdf_path, doc_id)
     page_count = max((el.metadata.page_number or 0) for el in elements) if elements else 0
+
+    # OCR done → Extracting starts (threshold 70)
+    pct(70)
     emit(f"Parsed {len(elements)} elements. Building document chunks…")
 
     full_doc_text = (
@@ -307,6 +315,13 @@ def index_document(
     if not all_docs:
         return 0, DEFAULT_COLLECTION, page_count
 
+    # Chunk building done → Embedding starts (threshold 80)
+    pct(80)
     emit(f"Built {len(all_docs)} chunks. Generating embeddings and storing in pgvector…")
-    add_documents(doc_id, all_docs)
+
+    def _on_embed_batch(done: int, total: int) -> None:
+        # Fill 80 → 97 smoothly as batches complete
+        pct(80 + int((done / total) * 17))
+
+    add_documents(doc_id, all_docs, on_batch=_on_embed_batch)
     return len(all_docs), DEFAULT_COLLECTION, page_count

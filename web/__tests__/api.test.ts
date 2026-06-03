@@ -1,4 +1,4 @@
-import { chat, getDocStatus, listDocs, uploadDoc } from "@/lib/api";
+import { chat, getDocStatus, getMyUsage, listDocs, uploadDoc } from "@/lib/api";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
   global.fetch = jest.fn().mockResolvedValue({
@@ -95,5 +95,42 @@ describe("chat", () => {
       question: "What is this?",
       session_id: "sess1",
     });
+  });
+
+  it("calls onError with 429 sentinel when rate limited", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: (h: string) => (h === "Retry-After" ? "3600" : null) },
+      body: null,
+    });
+    const onError = jest.fn();
+    chat(
+      { doc_id: "abc", question: "hi" },
+      undefined,
+      () => {}, () => {}, () => {}, () => {},
+      onError,
+      undefined
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onError).toHaveBeenCalledWith("429:3600");
+  });
+});
+
+describe("getMyUsage", () => {
+  it("returns usage summary", async () => {
+    const summary = { total_cost_usd: 0.0042, total_tokens: 1234 };
+    mockFetch(summary);
+    const result = await getMyUsage("tok_abc");
+    expect(result.total_cost_usd).toBeCloseTo(0.0042);
+    expect(result.total_tokens).toBe(1234);
+    const call = (global.fetch as jest.Mock).mock.calls[0];
+    expect(call[0]).toContain("/usage/me");
+    expect(call[1].headers).toMatchObject({ Authorization: "Bearer tok_abc" });
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetch({}, false, 500);
+    await expect(getMyUsage()).rejects.toThrow("Failed to fetch usage");
   });
 });

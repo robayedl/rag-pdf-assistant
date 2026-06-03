@@ -18,7 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@clerk/nextjs";
-import { chat, Citation, Doc, getDocFileUrl, listDocs } from "@/lib/api";
+import { toast } from "sonner";
+import { chat, Citation, Doc, fetchConversation, getDocFileUrl, listDocs, USD_TO_AUD, type MetaEvent, type UsageEvent } from "@/lib/api";
 import {
   ChatSession,
   StoredMessage,
@@ -74,6 +75,7 @@ export default function ChatClient() {
   const [streaming, setStreaming] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [chatCost, setChatCost] = useState<number>(0);
 
   // PDF pane state
   const [pdfOpen, setPdfOpen] = useState(false);
@@ -112,6 +114,7 @@ export default function ChatClient() {
             });
             setActiveId(session.id);
             activeSessionRef.current = session;
+            setChatCost(0);
             router.replace(`/chat?session=${session.id}`);
           }
         } else if (sessionParam) {
@@ -119,7 +122,31 @@ export default function ChatClient() {
           if (session) {
             setActiveId(session.id);
             activeSessionRef.current = session;
-            setMessages(session.messages.map((m) => ({ ...m })));
+            let msgs: StoredMessage[] = session.messages;
+
+            // Recover missed answer if user navigated away before the stream completed
+            if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
+              const dbMsgs = await fetchConversation(session.id, t ?? undefined);
+              const lastDb = dbMsgs[dbMsgs.length - 1];
+              if (lastDb?.role === "assistant") {
+                const recovered: StoredMessage = {
+                  id: uid(),
+                  role: "assistant",
+                  content: lastDb.content,
+                  citations: lastDb.citations,
+                  tokens_in: lastDb.tokens_in,
+                  tokens_out: lastDb.tokens_out,
+                  cost_usd: lastDb.cost_usd,
+                };
+                msgs = [...msgs, recovered];
+                const updated = { ...session, messages: msgs, updated_at: new Date().toISOString() };
+                activeSessionRef.current = updated;
+                setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
+              }
+            }
+
+            setMessages(msgs.map((m) => ({ ...m })));
+            setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
           }
         }
       } catch {}
@@ -135,12 +162,35 @@ export default function ChatClient() {
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
 
-  function openSession(session: ChatSession) {
+  async function openSession(session: ChatSession) {
     if (streaming) abortRef.current?.abort();
     setStreaming(false);
     setActiveId(session.id);
     activeSessionRef.current = session;
-    setMessages(session.messages.map((m) => ({ ...m })));
+    let msgs: StoredMessage[] = session.messages;
+
+    if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
+      const dbMsgs = await fetchConversation(session.id, authTokenRef.current);
+      const lastDb = dbMsgs[dbMsgs.length - 1];
+      if (lastDb?.role === "assistant") {
+        const recovered: StoredMessage = {
+          id: uid(),
+          role: "assistant",
+          content: lastDb.content,
+          citations: lastDb.citations,
+          tokens_in: lastDb.tokens_in,
+          tokens_out: lastDb.tokens_out,
+          cost_usd: lastDb.cost_usd,
+        };
+        msgs = [...msgs, recovered];
+        const updated = { ...session, messages: msgs, updated_at: new Date().toISOString() };
+        activeSessionRef.current = updated;
+        setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
+      }
+    }
+
+    setMessages(msgs.map((m) => ({ ...m })));
+    setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
     router.replace(`/chat?session=${session.id}`);
   }
 
@@ -154,6 +204,7 @@ export default function ChatClient() {
     setActiveId(session.id);
     activeSessionRef.current = session;
     setMessages([]);
+    setChatCost(0);
     setNewChatOpen(false);
     router.replace(`/chat?session=${session.id}`);
   }
@@ -232,6 +283,17 @@ export default function ChatClient() {
   }
 
   function friendlyError(err: string): string {
+    if (err.startsWith("429:")) {
+      const secs = parseInt(err.slice(4), 10);
+      const mins = Math.ceil(secs / 60);
+      const label = secs >= 3600
+        ? `${Math.ceil(secs / 3600)}h`
+        : secs >= 60
+          ? `${mins}m`
+          : `${secs}s`;
+      toast.warning(`Rate limit reached. Resets in ${label}.`, { duration: 10000 });
+      return "Rate limit reached. Try again soon.";
+    }
     if (err.includes("404") || err.toLowerCase().includes("not found"))
       return "Document not found. It may have been deleted.";
     if (err.includes("401") || err.includes("403"))
@@ -258,9 +320,44 @@ export default function ChatClient() {
     });
   }
 
+  function directReply(question: string): string | null {
+    const q = question.toLowerCase().replace(/[?!.,]+$/, "").trim();
+    const doc = activeSession?.doc_name ?? "this document";
+
+    if (/^(hi|hello|hey|howdy|hiya|sup|yo|greetings|good\s*(morning|afternoon|evening))(\s|$)/.test(q))
+      return `Hello! I'm DocuMind, your AI assistant for ${doc}.\n\nAsk me anything about the document and I'll search it, verify my answer, and point you to the exact pages.`;
+
+    if (/who are you|what are you|tell me about yourself|introduce yourself|what is documind/.test(q))
+      return `I'm DocuMind, an agentic document intelligence system.\n\nI'm powered by a LangGraph pipeline that combines:\n- Hybrid search: pgvector + full-text, fused with Reciprocal Rank Fusion\n- Cross-encoder reranking: to surface the most relevant passages\n- Gemini 2.5 Flash: for accurate, grounded answer generation\n- Hallucination checking: every answer is verified before it reaches you\n\nCurrently loaded: ${doc}`;
+
+    if (/what can you do|how can you help|what do you do|your capabilities|what can i ask|what kind of questions|what should i ask/.test(q))
+      return `Here's what I can do with ${doc}:\n\n- Answer questions with page-level citations; click any badge to jump to the source\n- Summarise sections, chapters, or the whole document\n- Extract specific data: tables, numbers, names, dates\n- Explain complex passages in plain language\n- Compare sections or identify contradictions\n- Find any topic, term, or concept mentioned in the document\n\nJust ask naturally and I'll figure out where to look.`;
+
+    if (/^(help|how do i use (this|you)|how does this work|instructions|commands|getting started)/.test(q))
+      return `How to use DocuMind:\n\n1. Type your question in the box below and press Send or Enter\n2. I'll search the document, rerank results, generate an answer, and verify it\n3. Click the p.N citation badges under my answer to jump to that page in the PDF\n4. Use the panel icon (top right) to open the PDF side by side\n\nTips for better answers:\n- Be specific: "What does section 4 say about pricing?"\n- Ask for summaries: "Summarise the key findings"\n- Ask follow-ups: I remember the conversation context`;
+
+    if (/^(thanks|thank you|thx|ty|cheers|great|awesome|perfect|nice)(\s|$)/.test(q))
+      return `You're welcome! Feel free to ask anything else about ${doc}.`;
+
+    return null;
+  }
+
   async function send() {
     const question = input.trim();
     if (!question || !activeSession || streaming) return;
+
+    const canned = directReply(question);
+    if (canned) {
+      setInput("");
+      const userMsg: LiveMessage = { id: uid(), role: "user", content: question };
+      const botMsg: LiveMessage = { id: uid(), role: "assistant", content: canned };
+      setMessages((prev) => {
+        const next = [...prev, userMsg, botMsg];
+        persistMessages(toStored(next));
+        return next;
+      });
+      return;
+    }
 
     cancelledRef.current = false;
     setInput("");
@@ -276,7 +373,7 @@ export default function ChatClient() {
 
     setMessages((prev) => {
       const next = [...prev, userMsg, assistantMsg];
-      persistMessages(toStored([...next.slice(0, -1), { ...assistantMsg, interrupted: true }]));
+      persistMessages(toStored(next.slice(0, -1)));
       return next;
     });
 
@@ -330,7 +427,25 @@ export default function ChatClient() {
         });
         setStreaming(false);
       },
-      abortRef.current.signal
+      abortRef.current.signal,
+      (u: UsageEvent) => {
+        if (cancelledRef.current) return;
+        setChatCost((prev) => prev + u.cost_usd);
+        updateLast((m) => ({
+          ...m,
+          tokens_in: u.tokens_in,
+          tokens_out: u.tokens_out,
+          cost_usd: u.cost_usd,
+        }));
+      },
+      (meta: MetaEvent) => {
+        if (!cancelledRef.current && meta.from_cache)
+          updateLast((m) => ({ ...m, from_cache: true }));
+      },
+      () => {
+        if (!cancelledRef.current)
+          toast.info("Personal information detected and redacted from your message.", { duration: 5000 });
+      }
     );
   }
 
@@ -360,7 +475,7 @@ export default function ChatClient() {
                       ? "bg-primary/15 text-foreground"
                       : "hover:bg-accent/50 text-muted-foreground hover:text-foreground"
                   }`}
-                  onClick={() => openSession(s)}
+                  onClick={() => void openSession(s)}
                 >
                   <p className="text-xs font-medium truncate pr-5">{s.doc_name}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
@@ -399,6 +514,9 @@ export default function ChatClient() {
             <div className="border-b border-border px-4 h-12 flex items-center gap-2 shrink-0 bg-background/80 backdrop-blur-sm">
               <span className="text-sm font-medium truncate text-muted-foreground flex-1">
                 {activeSession.doc_name}
+              </span>
+              <span className="text-[10px] text-muted-foreground/70 shrink-0">
+                {messages.reduce((s, m) => s + (m.tokens_in ?? 0) + (m.tokens_out ?? 0), 0).toLocaleString()} tokens · A${(chatCost * USD_TO_AUD).toFixed(4)}
               </span>
               <Button
                 variant="ghost"
@@ -475,7 +593,7 @@ export default function ChatClient() {
                                     <Loader2Icon className="size-3 animate-spin text-muted-foreground" />
                                   )}
                                   {msg.interrupted && msg.content && !msg.streaming && (
-                                    <span className="block text-[10px] text-muted-foreground/60 mt-1 italic">— interrupted</span>
+                                    <span className="block text-[10px] text-muted-foreground/60 mt-1 italic">(interrupted)</span>
                                   )}
                                 </>
                               )}
@@ -512,9 +630,17 @@ export default function ChatClient() {
                             </div>
                           )}
 
-                          {msg.duration_ms !== undefined && (
+                          {(msg.duration_ms !== undefined || (msg.cost_usd !== undefined && msg.cost_usd > 0)) && (
                             <span className="text-[10px] text-muted-foreground/60 px-1">
-                              Answered in {(msg.duration_ms / 1000).toFixed(1)}s
+                              {msg.duration_ms !== undefined && (
+                                <>
+                                  {`Answered in ${(msg.duration_ms / 1000).toFixed(1)}s`}
+                                  {msg.from_cache ? " from Cache" : ""}
+                                </>
+                              )}
+                              {!msg.from_cache && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
+                                `${msg.duration_ms !== undefined ? " Costing " : ""}A$${(msg.cost_usd * USD_TO_AUD).toFixed(4)} · ${((msg.tokens_in ?? 0) + (msg.tokens_out ?? 0)).toLocaleString()} tokens`
+                              )}
                             </span>
                           )}
                         </div>

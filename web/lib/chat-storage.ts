@@ -7,6 +7,10 @@ export interface StoredMessage {
   citations?: Citation[];
   duration_ms?: number;
   interrupted?: boolean;
+  tokens_in?: number;
+  tokens_out?: number;
+  cost_usd?: number;
+  from_cache?: boolean;
 }
 
 export interface ChatSession {

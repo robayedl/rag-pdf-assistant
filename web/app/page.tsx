@@ -4,20 +4,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   GitBranch, Search, Zap, Lightbulb,
-  Radio, BookOpen, MessageSquare, Brain, ShieldCheck,
+  Radio, BookOpen, Brain, Shield,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import Nav from "@/components/nav";
 
 const features = [
-  { icon: GitBranch,    title: "Agentic RAG",          desc: "LangGraph pipeline with routing, grading, rewriting, and hallucination checking" },
-  { icon: Search,       title: "Hybrid Search",         desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion" },
-  { icon: Zap,          title: "Semantic Cache",         desc: "Redis vector cache — repeated queries return instantly" },
-  { icon: Lightbulb,    title: "HyDE Fallback",          desc: "Hypothetical passage generation on low-confidence retrieval" },
-  { icon: Radio,        title: "SSE Streaming",          desc: "Real-time token-by-token output via Server-Sent Events" },
-  { icon: BookOpen,     title: "Citations",              desc: "Every answer is grounded with page references from your document" },
-  { icon: MessageSquare, title: "Conversation Memory",  desc: "Per-session chat history saved to your account across logins" },
-  { icon: ShieldCheck,  title: "Secure & Private",       desc: "Clerk JWT auth — your documents and chats are visible only to you" },
+  { icon: GitBranch, title: "Agentic RAG",         desc: "LangGraph pipeline with grading, query rewriting, and hallucination checking. Every answer is verified." },
+  { icon: Search,    title: "Hybrid Search",        desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion" },
+  { icon: Zap,       title: "Semantic Cache",        desc: "Redis vector cache; repeated queries return instantly without re-running the pipeline" },
+  { icon: Lightbulb, title: "HyDE Fallback",         desc: "Hypothetical passage generation on low-confidence retrieval to improve recall" },
+  { icon: Radio,     title: "SSE Streaming",         desc: "Real-time token-by-token output via Server-Sent Events; answers persist to the database even if you navigate away mid-stream" },
+  { icon: BookOpen,  title: "Citations",             desc: "Every answer is grounded with page references; click to jump to the exact passage" },
+  { icon: Shield,    title: "PII Redaction",          desc: "Presidio detects and strips personal information from your query before it reaches the model" },
+  { icon: Brain,     title: "Background Ingestion",   desc: "Celery worker processes PDFs asynchronously with live step-level progress and stop/reindex controls" },
 ];
 
 const container = {
@@ -73,9 +73,9 @@ export default function LandingPage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="text-base text-muted-foreground max-w-xl mx-auto mb-7 text-justify"
+            className="text-base text-muted-foreground max-w-xl mx-auto mb-7"
           >
-            Chat with any PDF using a production-grade pipeline — hybrid search,
+            Chat with any PDF using a production-grade pipeline: hybrid search,
             semantic caching, hallucination checking, and real-time streaming.
           </motion.p>
 

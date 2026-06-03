@@ -45,6 +45,75 @@ export interface ChatParams {
   session_id?: string;
 }
 
+export interface UsageEvent {
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+export type UsagePeriod = "1h" | "24h" | "7d" | "30d" | "all";
+
+export interface UsageSummary {
+  total_cost_usd: number;
+  total_tokens: number;
+}
+
+export interface UsageHistoryPoint {
+  bucket: string;
+  tokens: number;
+  requests: number;
+  cost_usd: number;
+}
+
+export interface UsageHistory {
+  points: UsageHistoryPoint[];
+}
+
+export interface MetaEvent {
+  hyde_triggered: boolean;
+  pii_redacted: boolean;
+  from_cache?: boolean;
+}
+
+export const USD_TO_AUD = 1.57;
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+  citations?: Citation[];
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+export async function fetchConversation(sessionId: string, token?: string): Promise<ConversationMessage[]> {
+  try {
+    const res = await fetch(`${API_URL}/conversations/${sessionId}`, {
+      headers: authHeaders(token),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function getMyUsage(token?: string, period: UsagePeriod = "30d"): Promise<UsageSummary> {
+  const res = await fetch(`${API_URL}/usage/me?period=${period}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to fetch usage");
+  return res.json();
+}
+
+export async function getMyUsageHistory(token?: string, period: UsagePeriod = "30d"): Promise<UsageHistory> {
+  const res = await fetch(`${API_URL}/usage/me/history?period=${period}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to fetch usage history");
+  return res.json();
+}
+
 function authHeaders(token?: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -159,7 +228,10 @@ export function chat(
   onCitations: (citations: Citation[]) => void,
   onDone: (duration_ms: number) => void,
   onError: (err: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onUsage?: (usage: UsageEvent) => void,
+  onMeta?: (meta: MetaEvent) => void,
+  onPii?: () => void
 ): void {
   const startTime = Date.now();
   fetch(`${API_URL}/query/stream`, {
@@ -169,6 +241,11 @@ export function chat(
     signal,
   })
     .then(async (res) => {
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After");
+        onError(`429:${retryAfter ?? "0"}`);
+        return;
+      }
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       if (!res.body) throw new Error("No response body");
 
@@ -192,6 +269,12 @@ export function chat(
           else if (event === "token") onToken(data);
           else if (event === "citations") {
             try { onCitations(JSON.parse(data)); } catch { /* ignore */ }
+          } else if (event === "usage") {
+            try { if (onUsage) onUsage(JSON.parse(data)); } catch { /* ignore */ }
+          } else if (event === "meta") {
+            try { if (onMeta) onMeta(JSON.parse(data)); } catch { /* ignore */ }
+          } else if (event === "pii") {
+            if (onPii) onPii();
           } else if (event === "done") onDone(Date.now() - startTime);
           else if (event === "error") onError(data);
         }

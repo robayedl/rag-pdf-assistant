@@ -4,6 +4,7 @@ import logging
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 
 from rag.agents.state import GraphState
 from rag.llm import get_llm
@@ -23,12 +24,14 @@ _REWRITER_PROMPT = ChatPromptTemplate.from_messages(
 )
 
 
-def rewrite_query(state: GraphState) -> GraphState:
+def rewrite_query(state: GraphState, config: RunnableConfig = {}) -> GraphState:
     """Rewrite the question for better retrieval and increment the retry counter."""
     try:
+        from rag.usage import capture_from_message
         llm = get_llm()
-        chain = _REWRITER_PROMPT | llm | StrOutputParser()
-        rewritten = chain.invoke({"question": state["question"]})
+        chain = _REWRITER_PROMPT | llm | RunnableLambda(capture_from_message) | StrOutputParser()
+        invoke_input = {"question": state["question"]}
+        rewritten = chain.invoke(invoke_input, config=config)
         return {
             "question": rewritten.strip(),
             "retry_count": state["retry_count"] + 1,

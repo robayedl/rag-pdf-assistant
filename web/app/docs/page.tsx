@@ -38,11 +38,11 @@ const ACTIVE_STATUSES = new Set(["pending", "processing"]);
 
 // Steps shown during ingestion — weights sum to 100 %
 const INGEST_STEPS = [
-  { label: "Queued",    weight: 5,  threshold: 0  },
-  { label: "Parsing",   weight: 10, threshold: 5  },
-  { label: "Extracting",weight: 30, threshold: 15 },
-  { label: "Embedding", weight: 30, threshold: 45 },
-  { label: "Finalizing",weight: 25, threshold: 75 },
+  { label: "Queued",      doneLabel: "Queued",      weight: 5,  threshold: 0  },
+  { label: "Parsing",     doneLabel: "Parsed",      weight: 65, threshold: 5  },
+  { label: "Extracting",  doneLabel: "Extracted",   weight: 10, threshold: 70 },
+  { label: "Embedding",   doneLabel: "Embedded",    weight: 18, threshold: 80 },
+  { label: "Finalizing",  doneLabel: "Finalized",   weight: 2,  threshold: 98 },
 ] as const;
 
 function getCurrentStepIdx(pct: number): number {
@@ -101,47 +101,92 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
-// ── Progress bar ─────────────────────────────────────────────────────────────
+// ── Smooth progress (bar + percentage counter share one animated value) ───────
 
-function ProgressBar({ value }: { value: number }) {
+function useSmoothedValue(real: number): number {
+  const [display, setDisplay] = useState(real);
+  const ref = useRef(real);
+
+  useEffect(() => { ref.current = display; });
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const cur = ref.current;
+      if (cur < real) {
+        const next = Math.min(cur + 0.5, real);
+        ref.current = next;
+        setDisplay(next);
+        return;
+      }
+      // Creep toward next threshold - 1 while waiting for real progress
+      const nextStep = INGEST_STEPS.find(s => s.threshold > real);
+      const cap = nextStep ? nextStep.threshold - 1 : real;
+      if (cur < cap) {
+        const next = Math.min(cur + 0.06, cap);
+        ref.current = next;
+        setDisplay(next);
+      }
+    }, 80);
+    return () => clearInterval(id);
+  }, [real]);
+
+  return display;
+}
+
+// One-line label + percentage, then bar on the line below
+function StatusProgress({ status, value }: { status: string; value: number }) {
+  const display = useSmoothedValue(value);
+  const isUploading = status === "uploading";
   return (
-    <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
-      <div
-        className="h-full rounded-full bg-primary transition-all duration-500"
-        style={{ width: `${value}%` }}
-      />
+    <div className="flex flex-col gap-1.5">
+      {/* Top row: status icon + label + percentage — all on one line */}
+      <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+        <Loader2Icon className="size-3 animate-spin text-blue-400 shrink-0" />
+        <span className="text-blue-400 text-xs ml-1">
+          {isUploading ? "Uploading" : "Processing"}
+        </span>
+        {!isUploading && (
+          <span className="text-xs text-muted-foreground tabular-nums" style={{ marginLeft: "auto" }}>
+            {Math.floor(display)}%
+          </span>
+        )}
+      </div>
+      {/* Bar */}
+      <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary"
+          style={{ width: `${display}%` }}
+        />
+      </div>
     </div>
   );
 }
 
 // ── Steps breakdown ──────────────────────────────────────────────────────────
 
-function StepsBreakdown({ progress }: { progress: number }) {
+function StepsBreakdown({ progress, status }: { progress: number; status: string }) {
   const currentIdx = getCurrentStepIdx(progress);
+  const stopped = status === "stopped" || status === "failed";
   return (
     <div className="flex items-center flex-wrap gap-0.5 pt-0.5">
       {INGEST_STEPS.map((s, i) => {
         const done = i < currentIdx;
         const active = i === currentIdx;
+        const labelColor = done
+          ? "text-emerald-400"
+          : active && stopped
+          ? "text-red-400"
+          : active
+          ? "text-yellow-400"
+          : "text-muted-foreground/35";
+        const arrowColor = done ? "text-emerald-500/60" : "text-muted-foreground/25";
         return (
           <span key={s.label} className="flex items-center gap-0.5">
-            <span
-              className={cn(
-                "text-[11px] leading-none font-medium",
-                done ? "text-emerald-400" : active ? "text-blue-400" : "text-muted-foreground/35"
-              )}
-            >
-              {s.label}
+            <span className={cn("text-[11px] leading-none font-medium", labelColor)}>
+              {done ? `${s.doneLabel} ✓` : s.label}
             </span>
             {i < INGEST_STEPS.length - 1 && (
-              <span
-                className={cn(
-                  "text-[11px] leading-none",
-                  done ? "text-emerald-500/60" : "text-muted-foreground/25"
-                )}
-              >
-                →
-              </span>
+              <span className={cn("text-[11px] leading-none", arrowColor)}>→</span>
             )}
           </span>
         );
@@ -383,24 +428,19 @@ export default function DocsPage() {
                           )}
                         </dl>
 
-                        {/* Status + progress percent */}
-                        <div className="flex items-center justify-between">
+                        {/* Status — one line with bar+% when processing/uploading */}
+                        {(doc.status === "processing" || isUploading) ? (
+                          <StatusProgress
+                            status={doc.status}
+                            value={isUploading ? 0 : doc.progress_percent}
+                          />
+                        ) : (
                           <StatusBadge status={doc.status} />
-                          {isActive && !isUploading && (
-                            <span className="text-xs text-muted-foreground tabular-nums">
-                              {doc.step ? `${doc.step} · ` : ""}{doc.progress_percent}%
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Progress bar */}
-                        {(isActive || isUploading) && (
-                          <ProgressBar value={isUploading ? 0 : doc.progress_percent} />
                         )}
 
-                        {/* Step breakdown — only once the worker is actively running */}
-                        {doc.status === "processing" && (
-                          <StepsBreakdown progress={doc.progress_percent} />
+                        {/* Step breakdown — active or stopped/failed */}
+                        {(doc.status === "processing" || doc.status === "stopped" || doc.status === "failed") && (
+                          <StepsBreakdown progress={doc.progress_percent} status={doc.status} />
                         )}
                       </CardContent>
 

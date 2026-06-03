@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import DocWatcher from "@/components/doc-watcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "DocuMind",
-  description: "Agentic document intelligence — chat with any PDF",
+  description: "Agentic document intelligence: chat with any PDF",
 };
 
 export default function RootLayout({
@@ -36,6 +37,7 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <body className="min-h-full flex flex-col bg-background text-foreground">
+          <DocWatcher />
           {children}
           <Toaster />
         </body>
