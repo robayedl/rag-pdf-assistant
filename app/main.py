@@ -6,6 +6,7 @@ import warnings
 
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 logging.getLogger("unstructured").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", message=".*max_size.*", category=FutureWarning)
 
 import json
@@ -34,7 +35,10 @@ import redis as _redis_mod
 
 from app.auth import ClerkUser, current_user
 from app.db import engine, get_db
-from app.models import Base, Document as DocModel, User
+from app.models import Base, Conversation, Document as DocModel, Message, User
+from app.pricing import compute_cost
+from app.ratelimit import check_and_consume
+from app.redact import redact, restore
 from app.storage import delete_pdf, get_storage_root, new_doc_id, pdf_path, save_pdf
 from rag import cache as semantic_cache
 from rag.agents.graph import run_agent
@@ -105,6 +109,23 @@ async def _init_db() -> None:
                 BEFORE INSERT OR UPDATE OF content ON chunks
                 FOR EACH ROW EXECUTE FUNCTION chunks_tsv_update()
         """))
+        # Migration 003: token / cost tracking columns on messages
+        await conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS tokens_in  INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS tokens_out INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS cost_usd   DOUBLE PRECISION"
+        ))
+        # Migration 004: persist progress/step at stop time on documents
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS stopped_at_progress INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS stopped_at_step     VARCHAR"
+        ))
 
 
 @asynccontextmanager
@@ -126,6 +147,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 
@@ -208,6 +230,7 @@ class QueryResponse(BaseModel):
     latency_ms: float
     from_cache: bool = False
     hyde_triggered: bool = False
+    pii_redacted: bool = False
 
 
 class DocRecord(BaseModel):
@@ -267,10 +290,13 @@ async def list_documents(
             page_count=doc.page_count,
             progress_percent=(
                 _get_progress(str(doc.id)) if doc.status == "processing"
-                else (100 if doc.status == "indexed" else 0)
+                else (100 if doc.status == "indexed"
+                      else (doc.stopped_at_progress or 0) if doc.status == "stopped"
+                      else 0)
             ),
             step=(
-                _get_step(str(doc.id)) if doc.status == "processing" else None
+                _get_step(str(doc.id)) if doc.status == "processing"
+                else (doc.stopped_at_step if doc.status == "stopped" else None)
             ),
         )
         for doc in docs
@@ -349,7 +375,7 @@ async def index_stream(
         from app.db import async_session_factory
 
         queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def on_progress(msg: str) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, ("status", msg))
@@ -416,6 +442,9 @@ async def get_document_status(
     elif doc.status == "indexed":
         progress = 100
         step = None
+    elif doc.status == "stopped":
+        progress = doc.stopped_at_progress or 0
+        step = doc.stopped_at_step
     else:
         progress = 0
         step = None
@@ -456,6 +485,8 @@ async def stop_document(
             pass
 
     doc.status = "stopped"
+    doc.stopped_at_progress = _get_progress(doc_id) or 0
+    doc.stopped_at_step = _get_step(doc_id)
     await db.commit()
     return {"status": "stopped"}
 
@@ -533,6 +564,13 @@ async def query(
     db: AsyncSession = Depends(get_db),
 ) -> QueryResponse:
     await _ensure_user(db, user)
+    allowed, retry_after = check_and_consume(user.user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded.",
+            headers={"Retry-After": str(retry_after)},
+        )
     await _get_doc_or_404(db, req.doc_id, user.user_id)
 
     t0 = time.perf_counter()
@@ -551,8 +589,9 @@ async def query(
             latency_ms=round(latency_ms, 2), from_cache=True,
         )
 
-    state = run_agent(question=req.question, doc_id=req.doc_id, session_id=req.session_id or "")
-    answer = state.get("generation", "")
+    safe_question, pii_map = redact(req.question)
+    state, usage = run_agent(question=safe_question, doc_id=req.doc_id, session_id=req.session_id or "")
+    answer = restore(state.get("generation", ""), pii_map)
     docs: List[Document] = state.get("documents", [])
 
     if not answer and not docs:
@@ -571,11 +610,15 @@ async def query(
 
     if answer and not _is_no_answer(answer):
         semantic_cache.store(req.question, req.doc_id, answer, [c.model_dump() for c in citations])
+        cost = compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
+        await _persist_usage(db, user.user_id, req.doc_id, req.session_id, req.question, answer,
+                             [c.model_dump() for c in citations], usage.tokens_in, usage.tokens_out, cost)
 
     return QueryResponse(
         doc_id=req.doc_id, question=req.question, answer=answer,
         citations=citations, retrieved=len(docs), retries=state.get("retry_count", 0),
         latency_ms=round(latency_ms, 2), hyde_triggered=state.get("hyde_triggered", False),
+        pii_redacted=bool(pii_map),
     )
 
 
@@ -585,34 +628,51 @@ async def query_stream(
     user: ClerkUser = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
+    import asyncio
+
     await _ensure_user(db, user)
     await _get_doc_or_404(db, req.doc_id, user.user_id)
 
-    async def event_stream() -> AsyncIterator[str]:
-        try:
-            import asyncio
+    cached = semantic_cache.lookup(req.question, req.doc_id)
 
-            cached = semantic_cache.lookup(req.question, req.doc_id)
+    if not cached:
+        allowed, retry_after = check_and_consume(user.user_id)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    sse_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def _run_query() -> None:
+        try:
             if cached:
-                yield _sse("status", "Cache hit — returning cached answer…")
-                answer: str = cached["answer"]
-                for i, word in enumerate(answer.split(" ")):
-                    yield _sse("token", word if i == 0 else " " + word)
+                await sse_queue.put(_sse("status", "Retrieving from cache..."))
+                for i, word in enumerate(cached["answer"].split(" ")):
+                    await sse_queue.put(_sse("token", word if i == 0 else " " + word))
                     await asyncio.sleep(0.005)
-                yield _sse("citations", json.dumps(cached.get("citations", [])))
-                yield _sse("done", "")
+                await sse_queue.put(_sse("citations", json.dumps(cached.get("citations", []))))
+                await sse_queue.put(_sse("meta", json.dumps({"hyde_triggered": False, "pii_redacted": False, "from_cache": True})))
+                await sse_queue.put(_sse("usage", json.dumps({"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0})))
+                await sse_queue.put(_sse("done", ""))
                 return
 
-            loop = asyncio.get_event_loop()
-            queue: asyncio.Queue[str] = asyncio.Queue()
+            safe_question, pii_map = redact(req.question)
+            if pii_map:
+                await sse_queue.put(_sse("pii", ""))
+
+            loop = asyncio.get_running_loop()
+            step_queue: asyncio.Queue[str] = asyncio.Queue()
 
             def on_step(label: str) -> None:
-                loop.call_soon_threadsafe(queue.put_nowait, label)
+                loop.call_soon_threadsafe(step_queue.put_nowait, label)
 
             future = loop.run_in_executor(
                 None,
                 lambda: run_agent(
-                    question=req.question,
+                    question=safe_question,
                     doc_id=req.doc_id,
                     session_id=req.session_id or "",
                     on_step=on_step,
@@ -621,27 +681,23 @@ async def query_stream(
 
             while not future.done():
                 try:
-                    label = await asyncio.wait_for(queue.get(), timeout=0.3)
-                    yield _sse("status", label)
+                    label = await asyncio.wait_for(step_queue.get(), timeout=0.3)
+                    await sse_queue.put(_sse("status", label))
                 except asyncio.TimeoutError:
                     pass
-            while not queue.empty():
-                yield _sse("status", queue.get_nowait())
+            while not step_queue.empty():
+                await sse_queue.put(_sse("status", step_queue.get_nowait()))
 
-            state = await future
-            answer = state.get("generation", "")
+            state, usage = await future
+            answer = restore(state.get("generation", ""), pii_map)
             docs: List[Document] = state.get("documents", [])
 
             if not answer and not docs:
-                yield _sse("error", "Document not indexed.")
+                await sse_queue.put(_sse("error", "Document not indexed."))
                 return
             if not answer:
-                yield _sse("error", "Could not generate an answer. Try rephrasing your question.")
+                await sse_queue.put(_sse("error", "Could not generate an answer. Try rephrasing your question."))
                 return
-
-            for i, word in enumerate(answer.split(" ")):
-                yield _sse("token", word if i == 0 else " " + word)
-                await asyncio.sleep(0.005)
 
             citations_data = (
                 []
@@ -657,22 +713,286 @@ async def query_stream(
                     for d in docs
                 ]
             )
-            yield _sse("citations", json.dumps(citations_data))
-            yield _sse("meta", json.dumps({"hyde_triggered": state.get("hyde_triggered", False)}))
-            yield _sse("done", "")
 
+            cost = 0.0
             if answer and not _is_no_answer(answer):
+                cost = compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
                 semantic_cache.store(req.question, req.doc_id, answer, citations_data)
+                from app.db import async_session_factory
+                async with async_session_factory() as sess:
+                    await _persist_usage(
+                        sess, user.user_id, req.doc_id, req.session_id, req.question, answer,
+                        citations_data, usage.tokens_in, usage.tokens_out, cost,
+                    )
+
+            for i, word in enumerate(answer.split(" ")):
+                await sse_queue.put(_sse("token", word if i == 0 else " " + word))
+                await asyncio.sleep(0.005)
+
+            await sse_queue.put(_sse("citations", json.dumps(citations_data)))
+            await sse_queue.put(_sse("meta", json.dumps({
+                "hyde_triggered": state.get("hyde_triggered", False),
+                "pii_redacted": bool(pii_map),
+            })))
+            await sse_queue.put(_sse("usage", json.dumps({
+                "tokens_in": usage.tokens_in,
+                "tokens_out": usage.tokens_out,
+                "cost_usd": round(cost, 6),
+            })))
+            await sse_queue.put(_sse("done", ""))
 
         except Exception as e:
-            yield _sse("error", str(e))
+            try:
+                await sse_queue.put(_sse("error", str(e)))
+            except Exception:
+                pass
+        finally:
+            await sse_queue.put(None)
+
+    asyncio.create_task(_run_query())
+
+    async def event_stream() -> AsyncIterator[str]:
+        while True:
+            item = await sse_queue.get()
+            if item is None:
+                break
+            yield item
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------
+# Usage endpoint
+# ---------------------------------------------------------------------------
+
+class UsageResponse(BaseModel):
+    total_cost_usd: float
+    total_tokens: int
+
+
+class UsageHistoryPoint(BaseModel):
+    bucket: str
+    tokens: int
+    requests: int
+    cost_usd: float
+
+
+class UsageHistoryResponse(BaseModel):
+    points: list[UsageHistoryPoint]
+
+
+_PERIOD_INTERVALS: dict[str, str | None] = {
+    "1h":  "1 hour",
+    "24h": "24 hours",
+    "7d":  "7 days",
+    "30d": "30 days",
+    "all": None,
+}
+
+# Granularity for the history chart per period
+_PERIOD_TRUNC: dict[str, str] = {
+    "1h":  "minute",
+    "24h": "hour",
+    "7d":  "day",
+    "30d": "day",
+    "all": "day",
+}
+
+
+@app.get("/usage/me", response_model=UsageResponse)
+async def get_my_usage(
+    period: str = "30d",
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UsageResponse:
+    await _ensure_user(db, user)
+    if period not in _PERIOD_INTERVALS:
+        period = "30d"
+    interval = _PERIOD_INTERVALS[period]
+    if interval:
+        where_time = f"AND m.created_at >= now() - INTERVAL '{interval}'"
+    else:
+        where_time = ""
+    result = await db.execute(
+        text(f"""
+            SELECT COALESCE(SUM(m.cost_usd), 0)    AS total_cost,
+                   COALESCE(SUM(m.tokens_in + m.tokens_out), 0) AS total_tokens
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE c.user_id = :uid
+              AND m.role = 'assistant'
+              {where_time}
+        """),
+        {"uid": user.user_id},
+    )
+    row = result.one()
+    return UsageResponse(
+        total_cost_usd=round(float(row.total_cost), 6),
+        total_tokens=int(row.total_tokens),
+    )
+
+
+@app.get("/usage/me/history", response_model=UsageHistoryResponse)
+async def get_my_usage_history(
+    period: str = "30d",
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UsageHistoryResponse:
+    await _ensure_user(db, user)
+    if period not in _PERIOD_INTERVALS:
+        period = "30d"
+    interval = _PERIOD_INTERVALS[period]
+    trunc = _PERIOD_TRUNC.get(period, "day")
+    if interval:
+        where_time = f"AND m.created_at >= now() - INTERVAL '{interval}'"
+    else:
+        where_time = ""
+    result = await db.execute(
+        text(f"""
+            SELECT DATE_TRUNC('{trunc}', m.created_at)         AS bucket,
+                   COUNT(*)                                     AS requests,
+                   COALESCE(SUM(m.tokens_in + m.tokens_out), 0) AS tokens,
+                   COALESCE(SUM(m.cost_usd), 0)                AS cost
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE c.user_id = :uid
+              AND m.role = 'assistant'
+              {where_time}
+            GROUP BY bucket
+            ORDER BY bucket ASC
+        """),
+        {"uid": user.user_id},
+    )
+    rows = result.fetchall()
+    points = [
+        UsageHistoryPoint(
+            bucket=row.bucket.isoformat() if row.bucket else "",
+            tokens=int(row.tokens),
+            requests=int(row.requests),
+            cost_usd=round(float(row.cost), 6),
+        )
+        for row in rows
+    ]
+    return UsageHistoryResponse(points=points)
+
+
+# ---------------------------------------------------------------------------
+# Conversation recovery endpoint
+# ---------------------------------------------------------------------------
+
+class ConversationMessageResponse(BaseModel):
+    role: str
+    content: str
+    citations: list = []
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+
+
+@app.get("/conversations/{session_id}", response_model=List[ConversationMessageResponse])
+async def get_conversation_messages(
+    session_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[ConversationMessageResponse]:
+    await _ensure_user(db, user)
+    try:
+        conv_id = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Not found.")
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == conv_id,
+            Conversation.user_id == user.user_id,
+        )
+    )
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Not found.")
+    msgs_result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conv_id)
+        .order_by(Message.created_at.asc())
+    )
+    msgs = msgs_result.scalars().all()
+    return [
+        ConversationMessageResponse(
+            role=m.role,
+            content=m.content,
+            citations=m.citations.get("items", []) if m.citations else [],
+            tokens_in=m.tokens_in or 0,
+            tokens_out=m.tokens_out or 0,
+            cost_usd=m.cost_usd or 0.0,
+        )
+        for m in msgs
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _persist_usage(
+    db: AsyncSession,
+    user_id: str,
+    doc_id: str,
+    session_id: str | None,
+    question: str,
+    answer: str,
+    citations: list,
+    tokens_in: int,
+    tokens_out: int,
+    cost_usd: float,
+) -> None:
+    """Store or update a conversation + user/assistant message pair with usage info."""
+    try:
+        conv_id: uuid.UUID | None = None
+        if session_id:
+            try:
+                conv_id = uuid.UUID(session_id)
+            except ValueError:
+                conv_id = None
+
+        if conv_id is not None:
+            # Verify the conversation actually exists; create it if the session is new
+            existing = await db.get(Conversation, conv_id)
+            if existing is None:
+                conv = Conversation(
+                    id=conv_id,
+                    user_id=user_id,
+                    doc_id=uuid.UUID(doc_id),
+                )
+                db.add(conv)
+                await db.flush()
+        else:
+            conv = Conversation(
+                user_id=user_id,
+                doc_id=uuid.UUID(doc_id),
+            )
+            db.add(conv)
+            await db.flush()
+            conv_id = conv.id
+
+        user_msg = Message(
+            conversation_id=conv_id,
+            role="user",
+            content=question,
+        )
+        assistant_msg = Message(
+            conversation_id=conv_id,
+            role="assistant",
+            content=answer,
+            citations={"items": citations},
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
+        )
+        db.add(user_msg)
+        db.add(assistant_msg)
+        await db.commit()
+    except Exception as _exc:
+        logger.warning("_persist_usage failed (non-critical): %s", _exc)
+
 
 _NO_ANSWER_PREFIXES = (
     "i do not know", "i don't know", "i cannot find", "i can't find",

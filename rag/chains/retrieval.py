@@ -34,7 +34,7 @@ def _rrf_merge(list_a: List[Document], list_b: List[Document], k: int) -> List[D
 
 
 def sparse_search(doc_id: str, query: str, k: int = 10) -> List[Document]:
-    """PostgreSQL ts_rank full-text search — BM25 replacement."""
+    """PostgreSQL ts_rank full-text search (BM25 replacement)."""
     dsn = _postgres_dsn()
     with psycopg2.connect(dsn) as conn:
         with conn.cursor() as cur:

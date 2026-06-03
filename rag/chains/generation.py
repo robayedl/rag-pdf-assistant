@@ -19,7 +19,7 @@ _SYSTEM_PROMPT = (
     "- When the context contains labels, names, or terms that directly address the "
     "substance of the question, use them to answer. Do not refuse just because a "
     "secondary detail (e.g. exact figure number, table position) is not explicitly "
-    "confirmed — answer from what IS in the context.\n"
+    "confirmed; answer from what IS in the context.\n"
     "- If the context genuinely contains no information relevant to the question, "
     "respond with: 'I do not know based on the provided document.'\n"
     "- Do not speculate or add information beyond what is in the context.\n"
@@ -53,5 +53,6 @@ def _format_inputs(inputs: dict) -> dict:
 
 @lru_cache(maxsize=1)
 def get_rag_chain():
+    from rag.usage import capture_from_message
     llm = get_llm()
-    return RunnableLambda(_format_inputs) | _PROMPT | llm | StrOutputParser()
+    return RunnableLambda(_format_inputs) | _PROMPT | llm | RunnableLambda(capture_from_message) | StrOutputParser()

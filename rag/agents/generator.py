@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 
+from langchain_core.runnables import RunnableConfig
+
 from rag.agents.state import GraphState
 from rag.chains.generation import get_rag_chain
 
 logger = logging.getLogger(__name__)
 
 
-def generate(state: GraphState) -> GraphState:
+def generate(state: GraphState, config: RunnableConfig = {}) -> GraphState:
     """Generate an answer from graded documents using the RAG chain."""
     try:
         session_id = state.get("session_id", "")
@@ -19,11 +21,8 @@ def generate(state: GraphState) -> GraphState:
             chat_history = get_memory(session_id).messages[-6:]  # last 3 exchanges
 
         chain = get_rag_chain()
-        answer = chain.invoke({
-            "input": state["question"],
-            "context": state["documents"],
-            "chat_history": chat_history,
-        })
+        invoke_kwargs = {"input": state["question"], "context": state["documents"], "chat_history": chat_history}
+        answer = chain.invoke(invoke_kwargs, config=config)
 
         # Save question + answer to memory for follow-up questions
         if session_id and answer:

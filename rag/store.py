@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from typing import List
+from typing import Callable, List
 
 import psycopg2
 import psycopg2.extras
@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 
 from rag.llm import get_embeddings
 
-_EMBED_BATCH = 64  # chunks per embedding batch
+_EMBED_BATCH = 96  # chunks per embedding batch
 
 
 def _postgres_dsn() -> str:
@@ -35,17 +35,23 @@ def clear_document(doc_id: str) -> None:
         conn.commit()
 
 
-def add_documents(doc_id: str, documents: List[Document]) -> None:
+def add_documents(
+    doc_id: str,
+    documents: List[Document],
+    on_batch: Callable[[int, int], None] | None = None,
+) -> None:
     if not documents:
         return
 
     embedder = get_embeddings()
     texts = [doc.page_content for doc in documents]
 
-    # Embed in batches to avoid OOM on large documents
+    total_batches = max(1, (len(texts) + _EMBED_BATCH - 1) // _EMBED_BATCH)
     all_embeddings: list[list[float]] = []
-    for i in range(0, len(texts), _EMBED_BATCH):
+    for batch_num, i in enumerate(range(0, len(texts), _EMBED_BATCH), 1):
         all_embeddings.extend(embedder.embed_documents(texts[i : i + _EMBED_BATCH]))
+        if on_batch:
+            on_batch(batch_num, total_batches)
 
     rows = [
         (

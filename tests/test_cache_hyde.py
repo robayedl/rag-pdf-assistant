@@ -185,10 +185,11 @@ def test_retrieve_with_hyde_returns_empty_when_no_candidates():
 def test_query_response_includes_from_cache_false(authed_client_with_doc):
     client, doc_id = authed_client_with_doc
 
+    mock_state = {"generation": "an answer", "documents": [], "retry_count": 0, "hyde_triggered": False}
+    mock_usage = MagicMock(tokens_in=10, tokens_out=20)
+
     with patch("app.main.semantic_cache.lookup", return_value=None), \
-         patch("app.main.run_agent", return_value={
-             "generation": "an answer", "documents": [], "retry_count": 0, "hyde_triggered": False
-         }):
+         patch("app.main.run_agent", return_value=(mock_state, mock_usage)):
         r = client.post("/query", json={"doc_id": doc_id, "question": "What is this?"})
 
     assert r.status_code == 200

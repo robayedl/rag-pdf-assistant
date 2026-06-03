@@ -1,5 +1,5 @@
 import Nav from "@/components/nav";
-import { LogInIcon, UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon } from "lucide-react";
+import { LogInIcon, UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon, BarChart2Icon } from "lucide-react";
 
 const steps = [
   {
@@ -7,7 +7,7 @@ const steps = [
     icon: LogInIcon,
     title: "Sign in",
     desc: "Click Sign in from the nav bar or visit /login. Create an account or sign in with an existing one.",
-    detail: "DocuMind uses Clerk for authentication. Your documents and chats are private — no other user can see them.",
+    detail: "DocuMind uses Clerk for authentication. Your documents, chats, and usage data are private; no other user can see them.",
   },
   {
     number: "02",
@@ -20,15 +20,15 @@ const steps = [
     number: "03",
     icon: DatabaseIcon,
     title: "Wait for indexing",
-    desc: "After upload the document is queued for background processing. The card shows live progress through five stages: Queued, Parsing, Extracting, Embedding, and Finalizing.",
-    detail: "Indexing can take 1 to 3 minutes depending on file size. You can leave the page and come back — the card updates automatically every two seconds. Use the Stop button to cancel at any time, or Reindex to retry a failed or stopped document. The Chat button activates once indexing completes.",
+    desc: "After upload the document is queued for background processing. The card shows a smooth progress bar and a step breakdown: Queued → Parsing → Extracting → Embedding → Finalizing.",
+    detail: "Indexing takes 1-3 minutes depending on file size. You can leave the page and come back; the card polls every 2 seconds. Use Stop to cancel at any time; the card remembers which step it was on. Use Reindex to retry a failed or stopped document. Chat activates once indexing completes.",
   },
   {
     number: "04",
     icon: MessageSquareIcon,
     title: "Start chatting",
-    desc: "Click Chat on any indexed document. You can also navigate to /chat directly and pick a document from the selector.",
-    detail: "Conversation history is saved per session and per account — pick up where you left off.",
+    desc: "Click Chat on any indexed document. Every answer streams back in real time with page-level citations you can click to jump to the exact passage.",
+    detail: "Conversation history is saved per session and per account. Each message shows the AUD cost and token count. If PII redaction is enabled, a notice appears when personal information is detected in your message and stripped before it reaches the model.",
   },
   {
     number: "05",
@@ -37,14 +37,22 @@ const steps = [
     desc: "Every answer includes page badges beneath the response. Click a badge to open the PDF at the exact source passage.",
     detail: "If the model cannot find relevant context, it says so rather than hallucinating.",
   },
+  {
+    number: "06",
+    icon: BarChart2Icon,
+    title: "Track usage",
+    desc: "Visit the Usage page to see your AUD spend and token count. Switch between Hourly, Daily, Weekly, Monthly, and All Time views.",
+    detail: "Cost is calculated from live Gemini 2.5 Flash pricing and converted to AUD. The chat header also shows your spend for the current hour.",
+  },
 ];
 
 const tips = [
-  "Ask specific questions — the retrieval pipeline works best with focused queries.",
-  "Rephrase if the first answer is weak — the rewrite node will try a different query.",
+  "Ask specific questions; the retrieval pipeline works best with focused queries.",
+  "Rephrase if the first answer is weak; the rewrite node will try a different query.",
   "Repeated or near-identical questions hit the semantic cache and return instantly.",
-  "Your documents are private — only you can see and chat with files you've uploaded.",
+  "Your documents are private; only you can see and chat with files you've uploaded.",
   "Session memory persists across logins — your chat history is saved to your account.",
+  "Rate limits are 30 requests per hour and 200 per day. A countdown toast appears when you hit the limit.",
 ];
 
 export default function HowToUsePage() {
@@ -64,7 +72,7 @@ export default function HowToUsePage() {
       <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">How to use DocuMind</h1>
         <p className="text-muted-foreground mb-14">
-          From upload to conversation in five steps.
+          From upload to conversation in six steps.
         </p>
 
         {/* Steps */}
