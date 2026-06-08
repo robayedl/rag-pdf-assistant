@@ -1,5 +1,5 @@
 import Nav from "@/components/nav";
-import { LogInIcon, UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon, BarChart2Icon } from "lucide-react";
+import { LogInIcon, UploadIcon, DatabaseIcon, MessageSquareIcon, LightbulbIcon, AlertCircleIcon, BarChart2Icon, PlugIcon } from "lucide-react";
 
 const steps = [
   {
@@ -43,6 +43,13 @@ const steps = [
     title: "Track usage",
     desc: "Visit the Usage page to see your AUD spend and token count. Switch between Hourly, Daily, Weekly, Monthly, and All Time views.",
     detail: "Cost is calculated from live Gemini 2.5 Flash pricing and converted to AUD. The chat header also shows your spend for the current hour.",
+  },
+  {
+    number: "07",
+    icon: PlugIcon,
+    title: "Use with Claude Desktop or Cursor (MCP)",
+    desc: "Go to Settings → API Keys, generate a key, then add the MCP server config to Claude Desktop. Your documents become searchable tools inside any MCP client.",
+    detail: "For Claude Desktop, add the mcpServers entry to claude_desktop_config.json with your DOCUMIND_API_KEY and restart. For Cursor, point it at http://localhost:8000/mcp/sse with the X-API-Key header. See the README for the exact config snippet.",
   },
 ];
 

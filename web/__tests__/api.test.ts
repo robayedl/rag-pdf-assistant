@@ -1,4 +1,4 @@
-import { chat, fetchConversation, getDocStatus, getMyUsage, listDocs, uploadDoc } from "@/lib/api";
+import { chat, createApiKey, fetchConversation, getDocStatus, getMyUsage, listApiKeys, listDocs, revokeApiKey, uploadDoc } from "@/lib/api";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
   global.fetch = jest.fn().mockResolvedValue({
@@ -158,6 +158,53 @@ describe("fetchConversation", () => {
     global.fetch = jest.fn().mockRejectedValue(new Error("Network error"));
     const result = await fetchConversation("sess-x");
     expect(result).toEqual([]);
+  });
+});
+
+describe("listApiKeys", () => {
+  it("returns key records on success", async () => {
+    const keys = [{ id: "k1", name: "Claude Desktop", created_at: "2026-01-01T00:00:00Z", last_used_at: null }];
+    mockFetch(keys);
+    const result = await listApiKeys("tok");
+    expect(result).toEqual(keys);
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain("/api-keys");
+  });
+
+  it("throws on non-ok response", async () => {
+    mockFetch({}, false, 401);
+    await expect(listApiKeys()).rejects.toThrow("Failed to fetch API keys");
+  });
+});
+
+describe("createApiKey", () => {
+  it("posts name and returns created record with key", async () => {
+    const created = { id: "k2", name: "Cursor", key: "dm_abc123", created_at: "2026-01-01T00:00:00Z" };
+    mockFetch(created);
+    const result = await createApiKey("Cursor", "tok");
+    expect(result.key).toBe("dm_abc123");
+    const call = (global.fetch as jest.Mock).mock.calls[0];
+    expect(call[1].method).toBe("POST");
+    expect(JSON.parse(call[1].body)).toMatchObject({ name: "Cursor" });
+  });
+
+  it("throws on failure", async () => {
+    mockFetch({}, false, 422);
+    await expect(createApiKey("x")).rejects.toThrow("Failed to create API key");
+  });
+});
+
+describe("revokeApiKey", () => {
+  it("sends DELETE to the correct URL", async () => {
+    mockFetch({});
+    await revokeApiKey("k1", "tok");
+    const call = (global.fetch as jest.Mock).mock.calls[0];
+    expect(call[0]).toContain("/api-keys/k1");
+    expect(call[1].method).toBe("DELETE");
+  });
+
+  it("throws on failure", async () => {
+    mockFetch({}, false, 404);
+    await expect(revokeApiKey("missing")).rejects.toThrow("Failed to revoke API key");
   });
 });
 

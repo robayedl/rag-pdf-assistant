@@ -17,7 +17,6 @@ from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Heavy module imports; run in parent process before Celery forks children.
 from app.models import Document as _Document, IngestionEvent as _IngestionEvent  # noqa: F401
 from rag.ingest import (                              # noqa: F401
     index_document as _index_document,

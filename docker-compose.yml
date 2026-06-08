@@ -73,6 +73,28 @@ services:
       api:
         condition: service_healthy
 
+  mcp:
+    build: .
+    command: python -m mcp_server
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: docker
+      STORAGE_DIR: /app/storage
+      DATABASE_URL: postgresql://documind:documind@postgres:5432/documind
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./storage:/app/storage
+      - hf_cache:/root/.cache/huggingface
+    stdin_open: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   web:
     build:
       context: ./web

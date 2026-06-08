@@ -548,7 +548,6 @@ export default function ChatClient() {
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      {/* Sidebar */}
       <aside className="w-60 shrink-0 border-r border-border flex flex-col bg-background/50">
         <div className="p-3 border-b border-border">
           <Button size="sm" className="w-full gap-1.5" onClick={() => setNewChatOpen(true)}>
@@ -594,7 +593,6 @@ export default function ChatClient() {
         </div>
       </aside>
 
-      {/* Chat area */}
       <div className={`flex flex-col overflow-hidden transition-all duration-300 ${pdfOpen ? "flex-1" : "flex-1"}`}>
         {!activeSession ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
@@ -607,7 +605,6 @@ export default function ChatClient() {
           </div>
         ) : (
           <>
-            {/* Header */}
             <div className="border-b border-border px-4 h-12 flex items-center gap-2 shrink-0 bg-background/80 backdrop-blur-sm">
               <span className="text-sm font-medium truncate flex-1">
                 {activeSession.doc_name}
@@ -635,7 +632,6 @@ export default function ChatClient() {
               </Button>
             </div>
 
-            {/* Messages */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-muted-foreground gap-2">
@@ -682,7 +678,6 @@ export default function ChatClient() {
                               ) : (
                                 <>
                                   {msg.content}
-                                  {/* Streaming indicators */}
                                   {msg.streaming && msg.content && (
                                     <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse rounded-full align-middle" />
                                   )}
@@ -756,7 +751,6 @@ export default function ChatClient() {
               )}
             </div>
 
-            {/* Input */}
             <div className="border-t border-border px-4 py-3 shrink-0 bg-background/80 backdrop-blur-sm">
               <form
                 className="max-w-3xl mx-auto flex gap-2"
@@ -790,7 +784,6 @@ export default function ChatClient() {
         )}
       </div>
 
-      {/* PDF Pane */}
       <AnimatePresence>
         {pdfOpen && (
           <motion.div
@@ -814,7 +807,6 @@ export default function ChatClient() {
         )}
       </AnimatePresence>
 
-      {/* New Chat dialog */}
       <Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
         <DialogContent>
           <DialogHeader>

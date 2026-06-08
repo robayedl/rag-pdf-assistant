@@ -8,12 +8,13 @@ import { UserButton, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 
 const links = [
-  { href: "/",           label: "Home",       external: false },
-  { href: "/docs",       label: "Documents",  external: false },
-  { href: "/chat",       label: "Chat",       external: false },
-  { href: "/usage",      label: "Usage",      external: false },
-  { href: "/how-to-use", label: "How to Use", external: false },
-  { href: "/about",      label: "About",      external: false },
+  { href: "/",                    label: "Home",       external: false },
+  { href: "/docs",                label: "Documents",  external: false },
+  { href: "/chat",                label: "Chat",       external: false },
+  { href: "/usage",               label: "Usage",      external: false },
+  { href: "/api-keys",             label: "API Keys",   external: false },
+  { href: "/how-to-use",          label: "How to Use", external: false },
+  { href: "/about",               label: "About",      external: false },
   { href: "https://github.com/robayedl/documind", label: "GitHub", external: true },
 ];
 
