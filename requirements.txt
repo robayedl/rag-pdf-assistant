@@ -29,8 +29,8 @@ pytest==8.3.4
 httpx==0.28.1
 ruff==0.9.6
 
-# PDF processing
-unstructured[pdf]>=0.15.0
+# PDF / DOCX processing
+unstructured[pdf,docx]>=0.15.0
 markdownify>=0.13.0
 
 # Embeddings & models

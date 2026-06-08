@@ -10,7 +10,7 @@ import {
   type UsageSummary,
   type UsageHistoryPoint,
 } from "@/lib/api";
-import { Loader2Icon, ZapIcon } from "lucide-react";
+import { CoinsIcon, Loader2Icon, ZapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   ResponsiveContainer,
@@ -20,7 +20,6 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  Legend,
 } from "recharts";
 
 const PERIODS: { key: UsagePeriod; label: string }[] = [
@@ -48,11 +47,13 @@ function ChartTooltip({ active, payload, label, period }: any) {
   return (
     <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-md">
       <p className="font-medium mb-1">{formatBucket(label, period)}</p>
-      {payload.map((p: { name: string; value: number; color: string }) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name === "requests" ? `Requests: ${p.value}` : `Tokens: ${p.value.toLocaleString()}`}
-        </p>
-      ))}
+      {payload.map((p: { name: string; value: number; color: string }) => {
+        let display = "";
+        if (p.name === "requests") display = `Requests: ${p.value}`;
+        else if (p.name === "tokens") display = `Tokens: ${p.value.toLocaleString()}`;
+        else if (p.name === "cost_aud") display = `Cost: A$${p.value.toFixed(4)}`;
+        return <p key={p.name} style={{ color: p.color }}>{display}</p>;
+      })}
     </div>
   );
 }
@@ -89,6 +90,7 @@ export default function UsageClient() {
     bucket: p.bucket,
     requests: p.requests,
     tokens: p.tokens,
+    cost_aud: Math.round(p.cost_usd * USD_TO_AUD * 100000) / 100000,
   }));
 
   return (
@@ -127,11 +129,11 @@ export default function UsageClient() {
           {/* Summary cards */}
           <div className="grid grid-cols-2 gap-4">
             <div className="rounded-xl border border-border bg-card p-6 flex flex-col gap-2">
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                {periodLabel} cost
+              <span className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <CoinsIcon className="size-3" /> {periodLabel} cost
               </span>
               <span className="text-3xl font-bold tabular-nums">
-                A${((usage?.total_cost_usd ?? 0) * USD_TO_AUD).toFixed(4)}
+                A${(Math.round((usage?.total_cost_usd ?? 0) * USD_TO_AUD * 10000) / 10000).toFixed(4)}
               </span>
               <span className="text-xs text-muted-foreground">AUD</span>
             </div>
@@ -181,6 +183,42 @@ export default function UsageClient() {
                       type="monotone"
                       dataKey="requests"
                       stroke="oklch(0.62 0.22 264)"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Cost chart */}
+              <div className="rounded-xl border border-border bg-card p-5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">
+                  Cost (AUD)
+                </p>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={chartData} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
+                    <XAxis
+                      dataKey="bucket"
+                      tickFormatter={(v) => formatBucket(v, period)}
+                      tick={{ fontSize: 10, fill: "oklch(0.7 0 0)" }}
+                      axisLine={false}
+                      tickLine={false}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tick={{ fontSize: 10, fill: "oklch(0.7 0 0)" }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: number) => `A$${v.toFixed(4)}`}
+                      width={58}
+                    />
+                    <Tooltip content={<ChartTooltip period={period} />} />
+                    <Line
+                      type="monotone"
+                      dataKey="cost_aud"
+                      stroke="oklch(0.75 0.18 55)"
                       strokeWidth={2}
                       dot={false}
                       activeDot={{ r: 4 }}

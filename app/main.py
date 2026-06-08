@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,14 +35,17 @@ import redis as _redis_mod
 
 from app.auth import ClerkUser, current_user
 from app.db import engine, get_db
-from app.models import Base, Conversation, Document as DocModel, Message, User
+from app.models import Base, Conversation, Document as DocModel, IngestionEvent, Message, User
 from app.pricing import compute_cost
 from app.ratelimit import check_and_consume
 from app.redact import redact, restore
-from app.storage import delete_pdf, get_storage_root, new_doc_id, pdf_path, save_pdf
+from app.storage import (
+    delete_docx, delete_pdf, docx_path, get_storage_root,
+    new_doc_id, pdf_path, save_docx, save_pdf,
+)
 from rag import cache as semantic_cache
 from rag.agents.graph import run_agent
-from rag.ingest import index_document
+from rag.ingest import get_docx_pdf_path, index_document
 from rag.llm import get_embeddings, get_llm
 from rag.store import clear_document
 
@@ -109,7 +112,6 @@ async def _init_db() -> None:
                 BEFORE INSERT OR UPDATE OF content ON chunks
                 FOR EACH ROW EXECUTE FUNCTION chunks_tsv_update()
         """))
-        # Migration 003: token / cost tracking columns on messages
         await conn.execute(text(
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS tokens_in  INTEGER"
         ))
@@ -119,13 +121,44 @@ async def _init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS cost_usd   DOUBLE PRECISION"
         ))
-        # Migration 004: persist progress/step at stop time on documents
         await conn.execute(text(
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS stopped_at_progress INTEGER"
         ))
         await conn.execute(text(
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS stopped_at_step     VARCHAR"
         ))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type  VARCHAR NOT NULL DEFAULT 'pdf'"
+        ))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ingestion_events (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id     TEXT NOT NULL REFERENCES users(clerk_id),
+                doc_id      UUID REFERENCES documents(id) ON DELETE SET NULL,
+                tokens_in   INTEGER NOT NULL DEFAULT 0,
+                tokens_out  INTEGER NOT NULL DEFAULT 0,
+                cost_usd    DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """))
+        # SET NULL on doc FKs so deleting a document never erases historical cost rows.
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                ALTER TABLE ingestion_events
+                    DROP CONSTRAINT IF EXISTS ingestion_events_doc_id_fkey;
+                ALTER TABLE ingestion_events
+                    ADD CONSTRAINT ingestion_events_doc_id_fkey
+                    FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE SET NULL;
+
+                ALTER TABLE conversations
+                    DROP CONSTRAINT IF EXISTS conversations_doc_id_fkey;
+                ALTER TABLE conversations
+                    ADD CONSTRAINT conversations_doc_id_fkey
+                    FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE SET NULL;
+            END
+            $$;
+        """))
 
 
 @asynccontextmanager
@@ -151,9 +184,6 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 async def _ensure_user(db: AsyncSession, user: ClerkUser) -> None:
     """Upsert the Clerk user into the users table on every authenticated request."""
@@ -180,14 +210,11 @@ async def _get_doc_or_404(
         )
     )
     doc = result.scalar_one_or_none()
-    if doc is None or not pdf_path(doc_id).exists():
+    if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     return doc
 
 
-# ---------------------------------------------------------------------------
-# Pydantic schemas
-# ---------------------------------------------------------------------------
 
 class HealthResponse(BaseModel):
     status: str = "ok"
@@ -198,6 +225,8 @@ class UploadResponse(BaseModel):
     doc_id: str
     filename: str
     status: str = "pending"
+    source_type: str = "pdf"
+
 
 
 class IndexResponse(BaseModel):
@@ -239,10 +268,13 @@ class DocRecord(BaseModel):
     uploaded_at: str
     status: str
     indexed: bool
+    source_type: str = "pdf"
     index_time_s: Optional[float] = None
     page_count: Optional[int] = None
     progress_percent: int = 0
     step: Optional[str] = None
+    ingestion_cost_usd: Optional[float] = None
+    ingestion_tokens: Optional[int] = None
 
 
 class DocStatusResponse(BaseModel):
@@ -258,9 +290,6 @@ class StreamQueryRequest(BaseModel):
     session_id: Optional[str] = Field(None)
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
@@ -279,6 +308,22 @@ async def list_documents(
         .order_by(DocModel.created_at.desc())
     )
     docs = result.scalars().all()
+
+    # Aggregate ingestion cost/tokens per doc in one query
+    ie_rows = await db.execute(
+        select(
+            IngestionEvent.doc_id,
+            func.sum(IngestionEvent.cost_usd).label("cost"),
+            func.sum(IngestionEvent.tokens_in + IngestionEvent.tokens_out).label("tokens"),
+        )
+        .where(IngestionEvent.user_id == user.user_id)
+        .group_by(IngestionEvent.doc_id)
+    )
+    ingest_by_doc: dict = {
+        str(row.doc_id): (row.cost, row.tokens)
+        for row in ie_rows.all()
+    }
+
     return [
         DocRecord(
             doc_id=str(doc.id),
@@ -286,6 +331,7 @@ async def list_documents(
             uploaded_at=doc.created_at.isoformat(),
             status=doc.status,
             indexed=doc.status == "indexed",
+            source_type=doc.source_type or "pdf",
             index_time_s=doc.index_time_s,
             page_count=doc.page_count,
             progress_percent=(
@@ -298,9 +344,19 @@ async def list_documents(
                 _get_step(str(doc.id)) if doc.status == "processing"
                 else (doc.stopped_at_step if doc.status == "stopped" else None)
             ),
+            ingestion_cost_usd=ingest_by_doc.get(str(doc.id), (None, None))[0],
+            ingestion_tokens=ingest_by_doc.get(str(doc.id), (None, None))[1],
         )
         for doc in docs
     ]
+
+
+_ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx"}
+_MIME_ALLOWLIST = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/octet-stream",  # some browsers send this for .docx
+}
 
 
 @app.post("/documents", response_model=UploadResponse)
@@ -309,21 +365,31 @@ async def upload_document(
     user: ClerkUser = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UploadResponse:
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    fname = (file.filename or "").lower()
+    ext = "." + fname.rsplit(".", 1)[-1] if "." in fname else ""
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF and DOCX files are supported.",
+        )
 
     await _ensure_user(db, user)
 
     doc_id = new_doc_id()
-    out_path = pdf_path(doc_id)
     content = await file.read()
-    save_pdf(out_path, content)
+    source_type = "docx" if ext == ".docx" else "pdf"
+
+    if source_type == "pdf":
+        save_pdf(pdf_path(doc_id), content)
+    else:
+        save_docx(docx_path(doc_id), content)
 
     doc = DocModel(
         id=uuid.UUID(doc_id),
         user_id=user.user_id,
         filename=file.filename,
         status="pending",
+        source_type=source_type,
     )
     db.add(doc)
     await db.commit()
@@ -333,7 +399,8 @@ async def upload_document(
     doc.celery_task_id = task.id
     await db.commit()
 
-    return UploadResponse(doc_id=doc_id, filename=file.filename, status="pending")
+    return UploadResponse(doc_id=doc_id, filename=file.filename or "", status="pending", source_type=source_type)
+
 
 
 @app.post("/documents/{doc_id}/index", response_model=IndexResponse)
@@ -508,7 +575,11 @@ async def reindex_document(
     doc = result.scalar_one_or_none()
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
-    if not pdf_path(doc_id).exists():
+
+    source_type = doc.source_type or "pdf"
+    if source_type == "pdf" and not pdf_path(doc_id).exists():
+        raise HTTPException(status_code=404, detail="Document file not found.")
+    if source_type == "docx" and not docx_path(doc_id).exists():
         raise HTTPException(status_code=404, detail="Document file not found.")
 
     doc.status = "pending"
@@ -532,15 +603,22 @@ async def delete_doc(
     await _ensure_user(db, user)
     doc = await _get_doc_or_404(db, doc_id, user.user_id)
 
-    # Remove PDF from disk
-    delete_pdf(doc_id)
-    # Remove chunks from pgvector
+    source_type = doc.source_type or "pdf"
+    if source_type == "pdf":
+        delete_pdf(doc_id)
+        figures_dir = get_storage_root() / "figures" / doc_id
+        if figures_dir.exists():
+            shutil.rmtree(figures_dir)
+    elif source_type == "docx":
+        delete_docx(doc_id)
+        converted = get_docx_pdf_path(doc_id)
+        if converted.exists():
+            converted.unlink()
+        figures_dir = get_storage_root() / "figures" / doc_id
+        if figures_dir.exists():
+            shutil.rmtree(figures_dir)
+
     clear_document(doc_id)
-    # Remove extracted figures
-    figures_dir = get_storage_root() / "figures" / doc_id
-    if figures_dir.exists():
-        shutil.rmtree(figures_dir)
-    # Remove DB record (cascades to chunks via FK)
     await db.execute(delete(DocModel).where(DocModel.id == doc.id))
     await db.commit()
 
@@ -552,9 +630,43 @@ async def get_document_file(
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
     await _ensure_user(db, user)
-    await _get_doc_or_404(db, doc_id, user.user_id)
+    doc = await _get_doc_or_404(db, doc_id, user.user_id)
+    source_type = doc.source_type or "pdf"
+    if source_type == "docx":
+        # Serve the converted PDF from the docx folder so the inline viewer works.
+        # Fall back to the original DOCX if conversion hasn't run yet.
+        converted = get_docx_pdf_path(doc_id)
+        if converted.exists():
+            return FileResponse(converted, media_type="application/pdf", filename=converted.name)
+        path = docx_path(doc_id)
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return FileResponse(path, media_type=media_type, filename=path.name)
     path = pdf_path(doc_id)
     return FileResponse(path, media_type="application/pdf", filename=path.name)
+
+
+@app.get("/documents/{doc_id}/download")
+async def download_document(
+    doc_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    await _ensure_user(db, user)
+    doc = await _get_doc_or_404(db, doc_id, user.user_id)
+    source_type = doc.source_type or "pdf"
+    if source_type == "docx":
+        path = docx_path(doc_id)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="File not found.")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=doc.filename,
+        )
+    path = pdf_path(doc_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(path, media_type="application/pdf", filename=doc.filename)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -608,11 +720,15 @@ async def query(
     )
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
-    if answer and not _is_no_answer(answer):
+    cost = (
+        compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
+        if (usage.tokens_in + usage.tokens_out > 0)
+        else 0.0
+    )
+    if not _is_no_answer(answer):
         semantic_cache.store(req.question, req.doc_id, answer, [c.model_dump() for c in citations])
-        cost = compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
-        await _persist_usage(db, user.user_id, req.doc_id, req.session_id, req.question, answer,
-                             [c.model_dump() for c in citations], usage.tokens_in, usage.tokens_out, cost)
+    await _persist_usage(db, user.user_id, req.doc_id, req.session_id, req.question, answer,
+                         [c.model_dump() for c in citations], usage.tokens_in, usage.tokens_out, cost)
 
     return QueryResponse(
         doc_id=req.doc_id, question=req.question, answer=answer,
@@ -714,16 +830,19 @@ async def query_stream(
                 ]
             )
 
-            cost = 0.0
-            if answer and not _is_no_answer(answer):
-                cost = compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
+            cost = (
+                compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
+                if (usage.tokens_in + usage.tokens_out > 0)
+                else 0.0
+            )
+            if not _is_no_answer(answer):
                 semantic_cache.store(req.question, req.doc_id, answer, citations_data)
-                from app.db import async_session_factory
-                async with async_session_factory() as sess:
-                    await _persist_usage(
-                        sess, user.user_id, req.doc_id, req.session_id, req.question, answer,
-                        citations_data, usage.tokens_in, usage.tokens_out, cost,
-                    )
+            from app.db import async_session_factory
+            async with async_session_factory() as sess:
+                await _persist_usage(
+                    sess, user.user_id, req.doc_id, req.session_id, req.question, answer,
+                    citations_data, usage.tokens_in, usage.tokens_out, cost,
+                )
 
             for i, word in enumerate(answer.split(" ")):
                 await sse_queue.put(_sse("token", word if i == 0 else " " + word))
@@ -761,9 +880,6 @@ async def query_stream(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-# ---------------------------------------------------------------------------
-# Usage endpoint
-# ---------------------------------------------------------------------------
 
 class UsageResponse(BaseModel):
     total_cost_usd: float
@@ -789,7 +905,6 @@ _PERIOD_INTERVALS: dict[str, str | None] = {
     "all": None,
 }
 
-# Granularity for the history chart per period
 _PERIOD_TRUNC: dict[str, str] = {
     "1h":  "minute",
     "24h": "hour",
@@ -809,19 +924,24 @@ async def get_my_usage(
     if period not in _PERIOD_INTERVALS:
         period = "30d"
     interval = _PERIOD_INTERVALS[period]
-    if interval:
-        where_time = f"AND m.created_at >= now() - INTERVAL '{interval}'"
-    else:
-        where_time = ""
+    time_filter_chat = f"AND m.created_at >= now() - INTERVAL '{interval}'" if interval else ""
+    time_filter_ingest = f"AND ie.created_at >= now() - INTERVAL '{interval}'" if interval else ""
     result = await db.execute(
         text(f"""
-            SELECT COALESCE(SUM(m.cost_usd), 0)    AS total_cost,
-                   COALESCE(SUM(m.tokens_in + m.tokens_out), 0) AS total_tokens
-            FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE c.user_id = :uid
-              AND m.role = 'assistant'
-              {where_time}
+            SELECT COALESCE(SUM(combined.cost), 0)   AS total_cost,
+                   COALESCE(SUM(combined.tokens), 0) AS total_tokens
+            FROM (
+                SELECT m.cost_usd AS cost, (m.tokens_in + m.tokens_out) AS tokens
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = :uid AND m.role = 'assistant'
+                {time_filter_chat}
+                UNION ALL
+                SELECT ie.cost_usd AS cost, (ie.tokens_in + ie.tokens_out) AS tokens
+                FROM ingestion_events ie
+                WHERE ie.user_id = :uid
+                {time_filter_ingest}
+            ) combined
         """),
         {"uid": user.user_id},
     )
@@ -843,21 +963,30 @@ async def get_my_usage_history(
         period = "30d"
     interval = _PERIOD_INTERVALS[period]
     trunc = _PERIOD_TRUNC.get(period, "day")
-    if interval:
-        where_time = f"AND m.created_at >= now() - INTERVAL '{interval}'"
-    else:
-        where_time = ""
+    time_filter_chat = f"AND m.created_at >= now() - INTERVAL '{interval}'" if interval else ""
+    time_filter_ingest = f"AND ie.created_at >= now() - INTERVAL '{interval}'" if interval else ""
     result = await db.execute(
         text(f"""
-            SELECT DATE_TRUNC('{trunc}', m.created_at)         AS bucket,
-                   COUNT(*)                                     AS requests,
-                   COALESCE(SUM(m.tokens_in + m.tokens_out), 0) AS tokens,
-                   COALESCE(SUM(m.cost_usd), 0)                AS cost
-            FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE c.user_id = :uid
-              AND m.role = 'assistant'
-              {where_time}
+            SELECT DATE_TRUNC('{trunc}', combined.created_at) AS bucket,
+                   COUNT(*)                                    AS requests,
+                   COALESCE(SUM(combined.tokens), 0)          AS tokens,
+                   COALESCE(SUM(combined.cost), 0)            AS cost
+            FROM (
+                SELECT m.created_at,
+                       (m.tokens_in + m.tokens_out) AS tokens,
+                       m.cost_usd                   AS cost
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = :uid AND m.role = 'assistant'
+                {time_filter_chat}
+                UNION ALL
+                SELECT ie.created_at,
+                       (ie.tokens_in + ie.tokens_out) AS tokens,
+                       ie.cost_usd                    AS cost
+                FROM ingestion_events ie
+                WHERE ie.user_id = :uid
+                {time_filter_ingest}
+            ) combined
             GROUP BY bucket
             ORDER BY bucket ASC
         """),
@@ -876,9 +1005,6 @@ async def get_my_usage_history(
     return UsageHistoryResponse(points=points)
 
 
-# ---------------------------------------------------------------------------
-# Conversation recovery endpoint
-# ---------------------------------------------------------------------------
 
 class ConversationMessageResponse(BaseModel):
     role: str
@@ -887,6 +1013,7 @@ class ConversationMessageResponse(BaseModel):
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
+    created_at: str = ""
 
 
 @app.get("/conversations/{session_id}", response_model=List[ConversationMessageResponse])
@@ -923,14 +1050,12 @@ async def get_conversation_messages(
             tokens_in=m.tokens_in or 0,
             tokens_out=m.tokens_out or 0,
             cost_usd=m.cost_usd or 0.0,
+            created_at=m.created_at.isoformat() if m.created_at else "",
         )
         for m in msgs
     ]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 async def _persist_usage(
     db: AsyncSession,

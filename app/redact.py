@@ -8,15 +8,13 @@ logger = logging.getLogger(__name__)
 
 PII_REDACTION = os.getenv("PII_REDACTION", "false").lower() == "true"
 
-_ENTITIES = ["EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD", "PERSON"]
+_ENTITIES = ["EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD"]
 
-# Friendly placeholder prefixes per entity type
 _LABEL_MAP = {
     "EMAIL_ADDRESS": "EMAIL",
     "PHONE_NUMBER":  "PHONE",
     "US_SSN":        "SSN",
     "CREDIT_CARD":   "CREDIT_CARD",
-    "PERSON":        "PERSON",
 }
 
 

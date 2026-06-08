@@ -26,10 +26,17 @@ function storageKey(userId: string) {
   return userId ? `documind_chats_${userId}` : "documind_chats";
 }
 
+function sortByRecent(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  );
+}
+
 export function loadSessions(userId: string): ChatSession[] {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(storageKey(userId)) ?? "[]");
+    const raw: ChatSession[] = JSON.parse(localStorage.getItem(storageKey(userId)) ?? "[]");
+    return sortByRecent(raw);
   } catch {
     return [];
   }
@@ -56,9 +63,10 @@ export function upsertSession(
   userId: string
 ): ChatSession[] {
   const idx = sessions.findIndex((s) => s.id === updated.id);
-  const next = idx >= 0
+  const merged = idx >= 0
     ? sessions.map((s, i) => (i === idx ? updated : s))
     : [updated, ...sessions];
+  const next = sortByRecent(merged);
   saveSessions(next, userId);
   return next;
 }

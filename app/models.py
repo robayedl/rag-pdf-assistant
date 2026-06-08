@@ -30,6 +30,7 @@ class Document(Base):
     user_id:      Mapped[str]          = mapped_column(String, ForeignKey("users.clerk_id"), nullable=False)
     filename:     Mapped[str]          = mapped_column(String, nullable=False)
     status:        Mapped[str]          = mapped_column(String, default="uploaded")
+    source_type:   Mapped[str]          = mapped_column(String, default="pdf", server_default="pdf")
     page_count:    Mapped[int | None]   = mapped_column(Integer, nullable=True)
     index_time_s:  Mapped[float | None] = mapped_column(Double, nullable=True)
     error_message:        Mapped[str | None]   = mapped_column(Text, nullable=True)
@@ -47,13 +48,25 @@ class Conversation(Base):
 
     id:         Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id:    Mapped[str]            = mapped_column(String, ForeignKey("users.clerk_id"), nullable=False)
-    doc_id:     Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
+    doc_id:     Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     title:      Mapped[str | None]     = mapped_column(String, nullable=True)
     created_at: Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user:     Mapped[User]         = relationship(back_populates="conversations")
     document: Mapped[Document | None] = relationship(back_populates="conversations")
     messages: Mapped[list[Message]]   = relationship(back_populates="conversation", cascade="all, delete-orphan")
+
+
+class IngestionEvent(Base):
+    __tablename__ = "ingestion_events"
+
+    id:         Mapped[uuid.UUID]      = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id:    Mapped[str]            = mapped_column(String, ForeignKey("users.clerk_id"), nullable=False)
+    doc_id:     Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    tokens_in:  Mapped[int]            = mapped_column(Integer, default=0, server_default="0")
+    tokens_out: Mapped[int]            = mapped_column(Integer, default=0, server_default="0")
+    cost_usd:   Mapped[float]          = mapped_column(Double, default=0.0, server_default="0.0")
+    created_at: Mapped[datetime]       = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Message(Base):

@@ -12,9 +12,9 @@ const steps = [
   {
     number: "02",
     icon: UploadIcon,
-    title: "Upload a PDF",
-    desc: "Go to Documents and click Upload PDF. Select any PDF from your machine. Only PDF files are supported.",
-    detail: "The file is stored securely on the server and associated with your account.",
+    title: "Add a document",
+    desc: "Go to Documents and click Upload File to upload a PDF or DOCX file.",
+    detail: "Files are stored securely on the server and associated with your account. DOCX files are automatically converted to PDF on upload so they go through the same OCR and embedding pipeline as native PDFs.",
   },
   {
     number: "03",
@@ -50,6 +50,7 @@ const tips = [
   "Ask specific questions; the retrieval pipeline works best with focused queries.",
   "Rephrase if the first answer is weak; the rewrite node will try a different query.",
   "Repeated or near-identical questions hit the semantic cache and return instantly.",
+  "Both PDF and DOCX files use the same inline viewer — click any page citation badge to jump directly to the source passage.",
   "Your documents are private; only you can see and chat with files you've uploaded.",
   "Session memory persists across logins — your chat history is saved to your account.",
   "Rate limits are 30 requests per hour and 200 per day. A countdown toast appears when you hit the limit.",

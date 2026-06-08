@@ -6,16 +6,20 @@ export interface Doc {
   uploaded_at: string;
   status: string;
   indexed: boolean;
+  source_type?: string;
   index_time_s?: number;
   page_count?: number;
   progress_percent: number;
   step?: string;
+  ingestion_cost_usd?: number;
+  ingestion_tokens?: number;
 }
 
 export interface UploadResponse {
   doc_id: string;
   filename: string;
   status: string;
+  source_type?: string;
 }
 
 export interface DocStatusResponse {
@@ -84,6 +88,7 @@ export interface ConversationMessage {
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
+  created_at?: string;
 }
 
 export async function fetchConversation(sessionId: string, token?: string): Promise<ConversationMessage[]> {
@@ -220,6 +225,10 @@ export function getDocFileUrl(docId: string, token?: string): string {
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
+export function getDocDownloadUrl(docId: string): string {
+  return `${API_URL}/documents/${docId}/download`;
+}
+
 export function chat(
   params: ChatParams,
   token: string | undefined,
@@ -252,6 +261,26 @@ export function chat(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      let doneFired = false;
+
+      const dispatchPart = (part: string) => {
+        const match = part.match(/^event: (\w+)\ndata: ([\s\S]*)$/);
+        if (!match) return;
+        const [, event, data] = match;
+        if (event === "status") onStatus(data);
+        else if (event === "token") onToken(data);
+        else if (event === "citations") {
+          try { onCitations(JSON.parse(data)); } catch { }
+        } else if (event === "usage") {
+          try { if (onUsage) onUsage(JSON.parse(data)); } catch { }
+        } else if (event === "meta") {
+          try { if (onMeta) onMeta(JSON.parse(data)); } catch { }
+        } else if (event === "pii") {
+          if (onPii) onPii();
+        } else if (event === "done") {
+          if (!doneFired) { doneFired = true; onDone(Date.now() - startTime); }
+        } else if (event === "error") onError(data);
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -260,25 +289,13 @@ export function chat(
 
         const parts = buf.split("\n\n");
         buf = parts.pop() ?? "";
-
-        for (const part of parts) {
-          const match = part.match(/^event: (\w+)\ndata: ([\s\S]*)$/);
-          if (!match) continue;
-          const [, event, data] = match;
-          if (event === "status") onStatus(data);
-          else if (event === "token") onToken(data);
-          else if (event === "citations") {
-            try { onCitations(JSON.parse(data)); } catch { /* ignore */ }
-          } else if (event === "usage") {
-            try { if (onUsage) onUsage(JSON.parse(data)); } catch { /* ignore */ }
-          } else if (event === "meta") {
-            try { if (onMeta) onMeta(JSON.parse(data)); } catch { /* ignore */ }
-          } else if (event === "pii") {
-            if (onPii) onPii();
-          } else if (event === "done") onDone(Date.now() - startTime);
-          else if (event === "error") onError(data);
-        }
+        for (const part of parts) dispatchPart(part);
       }
+
+      // Flush any remaining data not terminated by \n\n
+      if (buf.trim()) dispatchPart(buf.trim());
+      // Fallback: if stream closed without a done event (e.g. clean TCP close)
+      if (!doneFired) onDone(Date.now() - startTime);
     })
     .catch((err) => {
       if (err?.name !== "AbortError") onError(String(err));
