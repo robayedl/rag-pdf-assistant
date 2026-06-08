@@ -44,11 +44,7 @@ https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
 
 ## Architecture
 
-<table width="100%" border="1" style="border-collapse:collapse;border-color:#30363d;">
-<tr>
-<td width="50%" valign="top" align="center" style="padding:12px;border-color:#30363d;">
-
-**Query Pipeline**
+### Query Pipeline
 
 ```mermaid
 flowchart TD
@@ -79,13 +75,10 @@ flowchart TD
     FB --> E2([END])
 ```
 
-</td>
-<td width="50%" valign="top" align="center" style="padding:12px;border-color:#30363d;">
-
-**Ingestion Pipeline**
+### Ingestion Pipeline
 
 ```mermaid
-flowchart TD
+flowchart LR
     FILE([Upload File]) --> Q
     Q[Celery Queue\nRedis broker] --> DISP{source_type?}
 
@@ -104,10 +97,6 @@ flowchart TD
     EMB --> VEC[(pgvector\nHNSW index)]
     EMB --> TS[(PostgreSQL\nts_rank / GIN)]
 ```
-
-</td>
-</tr>
-</table>
 
 ---
 
