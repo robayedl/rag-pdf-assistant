@@ -54,7 +54,6 @@ export default function DocWatcher() {
       }
     }
 
-    // Kick off immediately then poll
     check();
     if (!pollRef.current) {
       pollRef.current = setInterval(check, POLL_MS);

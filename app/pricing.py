@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# Price per 1 million tokens in USD (input, output)
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash":          (0.15,  0.60),
     "gemini-2.5-flash-preview":  (0.15,  0.60),

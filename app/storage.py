@@ -27,3 +27,19 @@ def delete_pdf(doc_id: str) -> None:
     path = pdf_path(doc_id)
     if path.exists():
         path.unlink()
+
+
+def docx_path(doc_id: str) -> Path:
+    root = get_storage_root() / "docxs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{doc_id}.docx"
+
+
+def save_docx(path: Path, content: bytes) -> None:
+    path.write_bytes(content)
+
+
+def delete_docx(doc_id: str) -> None:
+    path = docx_path(doc_id)
+    if path.exists():
+        path.unlink()

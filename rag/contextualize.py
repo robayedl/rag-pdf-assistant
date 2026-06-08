@@ -49,8 +49,15 @@ def _get_llm() -> ChatGoogleGenerativeAI:
     )
 
 
-def contextualize_chunk(full_doc: str, chunk: str) -> str:
-    """Return a one-sentence context for chunk; result cached in SQLite by hash."""
+def _parse_usage(response: object) -> tuple[int, int]:
+    usage = getattr(response, "usage_metadata", None) or {}
+    if isinstance(usage, dict):
+        return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+    return int(getattr(usage, "input_tokens", 0) or 0), int(getattr(usage, "output_tokens", 0) or 0)
+
+
+def contextualize_chunk(full_doc: str, chunk: str) -> tuple[str, int, int]:
+    """Return (context, tokens_in, tokens_out). Cache hits return 0 tokens."""
     doc_hash = _sha256(full_doc)
     chunk_hash = _sha256(chunk)
 
@@ -60,15 +67,16 @@ def contextualize_chunk(full_doc: str, chunk: str) -> str:
             (doc_hash, chunk_hash),
         ).fetchone()
         if row:
-            return row[0]
+            return row[0], 0, 0
 
         prompt = _PROMPT.format(doc=full_doc, chunk=chunk)
         response = _get_llm().invoke(prompt)
         context = response.content.strip()
+        tin, tout = _parse_usage(response)
 
         conn.execute(
             "INSERT OR REPLACE INTO context_cache (doc_hash, chunk_hash, context) VALUES (?,?,?)",
             (doc_hash, chunk_hash, context),
         )
 
-    return context
+    return context, tin, tout

@@ -17,6 +17,11 @@ import {
   RefreshCwIcon,
   CloudUploadIcon,
   CopyIcon,
+  FileIcon,
+  EyeIcon,
+  XIcon,
+  CoinsIcon,
+  DownloadIcon,
 } from "lucide-react";
 import Nav from "@/components/nav";
 import { Button } from "@/components/ui/button";
@@ -30,24 +35,42 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@clerk/nextjs";
-import { Doc, deleteDoc, listDocs, reindexDoc, stopDoc, uploadDoc } from "@/lib/api";
+import { Doc, deleteDoc, getDocDownloadUrl, getDocFileUrl, listDocs, reindexDoc, stopDoc, uploadDoc } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { USD_TO_AUD } from "@/lib/api";
+import dynamic from "next/dynamic";
+
+const PdfPane = dynamic(() => import("@/components/PdfPane"), { ssr: false });
 
 // Statuses that mean a background job is running or queued
 const ACTIVE_STATUSES = new Set(["pending", "processing"]);
 
 // Steps shown during ingestion — weights sum to 100 %
-const INGEST_STEPS = [
-  { label: "Queued",      doneLabel: "Queued",      weight: 5,  threshold: 0  },
-  { label: "Parsing",     doneLabel: "Parsed",      weight: 65, threshold: 5  },
-  { label: "Extracting",  doneLabel: "Extracted",   weight: 10, threshold: 70 },
-  { label: "Embedding",   doneLabel: "Embedded",    weight: 18, threshold: 80 },
-  { label: "Finalizing",  doneLabel: "Finalized",   weight: 2,  threshold: 98 },
-] as const;
+const PDF_STEPS = [
+  { label: "Queued",     doneLabel: "Queued",     threshold: 0  },
+  { label: "Parsing",    doneLabel: "Parsed",     threshold: 5  },
+  { label: "Extracting", doneLabel: "Extracted",  threshold: 70 },
+  { label: "Embedding",  doneLabel: "Embedded",   threshold: 80 },
+  { label: "Finalizing", doneLabel: "Finalized",  threshold: 98 },
+];
 
-function getCurrentStepIdx(pct: number): number {
-  for (let i = INGEST_STEPS.length - 1; i >= 0; i--) {
-    if (pct >= INGEST_STEPS[i].threshold) return i;
+const DOCX_STEPS = [
+  { label: "Queued",      doneLabel: "Queued",     threshold: 0  },
+  { label: "Converting",  doneLabel: "Converted",  threshold: 5  },
+  { label: "Parsing",     doneLabel: "Parsed",     threshold: 8  },
+  { label: "Extracting",  doneLabel: "Extracted",  threshold: 70 },
+  { label: "Embedding",   doneLabel: "Embedded",   threshold: 80 },
+  { label: "Finalizing",  doneLabel: "Finalized",  threshold: 98 },
+];
+
+function getSteps(sourceType?: string) {
+  return sourceType === "docx" ? DOCX_STEPS : PDF_STEPS;
+}
+
+function getCurrentStepIdx(pct: number, sourceType?: string): number {
+  const steps = getSteps(sourceType);
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (pct >= steps[i].threshold) return i;
   }
   return 0;
 }
@@ -56,6 +79,23 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
     year: "numeric", month: "short", day: "numeric",
   });
+}
+
+// ── Source type badge ─────────────────────────────────────────────────────────
+
+function SourceBadge({ sourceType }: { sourceType: string }) {
+  if (sourceType === "docx") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-400/10 text-blue-400 text-[10px] font-medium uppercase tracking-wide">
+        <FileIcon className="size-3" /> DOCX
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-400/10 text-red-400 text-[10px] font-medium uppercase tracking-wide">
+      <FileTextIcon className="size-3" /> PDF
+    </span>
+  );
 }
 
 // ── Status badge ─────────────────────────────────────────────────────────────
@@ -103,13 +143,14 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Smooth progress (bar + percentage counter share one animated value) ───────
 
-function useSmoothedValue(real: number): number {
+function useSmoothedValue(real: number, sourceType?: string): number {
   const [display, setDisplay] = useState(real);
   const ref = useRef(real);
 
   useEffect(() => { ref.current = display; });
 
   useEffect(() => {
+    const steps = getSteps(sourceType);
     const id = setInterval(() => {
       const cur = ref.current;
       if (cur < real) {
@@ -119,7 +160,7 @@ function useSmoothedValue(real: number): number {
         return;
       }
       // Creep toward next threshold - 1 while waiting for real progress
-      const nextStep = INGEST_STEPS.find(s => s.threshold > real);
+      const nextStep = steps.find(s => s.threshold > real);
       const cap = nextStep ? nextStep.threshold - 1 : real;
       if (cur < cap) {
         const next = Math.min(cur + 0.06, cap);
@@ -128,14 +169,14 @@ function useSmoothedValue(real: number): number {
       }
     }, 80);
     return () => clearInterval(id);
-  }, [real]);
+  }, [real, sourceType]);
 
   return display;
 }
 
 // One-line label + percentage, then bar on the line below
-function StatusProgress({ status, value }: { status: string; value: number }) {
-  const display = useSmoothedValue(value);
+function StatusProgress({ status, value, sourceType }: { status: string; value: number; sourceType?: string }) {
+  const display = useSmoothedValue(value, sourceType);
   const isUploading = status === "uploading";
   return (
     <div className="flex flex-col gap-1.5">
@@ -164,12 +205,13 @@ function StatusProgress({ status, value }: { status: string; value: number }) {
 
 // ── Steps breakdown ──────────────────────────────────────────────────────────
 
-function StepsBreakdown({ progress, status }: { progress: number; status: string }) {
-  const currentIdx = getCurrentStepIdx(progress);
+function StepsBreakdown({ progress, status, sourceType }: { progress: number; status: string; sourceType?: string }) {
+  const steps = getSteps(sourceType);
+  const currentIdx = getCurrentStepIdx(progress, sourceType);
   const stopped = status === "stopped" || status === "failed";
   return (
     <div className="flex items-center flex-wrap gap-0.5 pt-0.5">
-      {INGEST_STEPS.map((s, i) => {
+      {steps.map((s, i) => {
         const done = i < currentIdx;
         const active = i === currentIdx;
         const labelColor = done
@@ -178,15 +220,15 @@ function StepsBreakdown({ progress, status }: { progress: number; status: string
           ? "text-red-400"
           : active
           ? "text-yellow-400"
-          : "text-muted-foreground/35";
-        const arrowColor = done ? "text-emerald-500/60" : "text-muted-foreground/25";
+          : "text-muted-foreground/50";
+        const arrowColor = done ? "text-emerald-500/70" : "text-muted-foreground/40";
         return (
           <span key={s.label} className="flex items-center gap-0.5">
-            <span className={cn("text-[11px] leading-none font-medium", labelColor)}>
+            <span className={cn("text-xs leading-none font-medium", labelColor)}>
               {done ? `${s.doneLabel} ✓` : s.label}
             </span>
-            {i < INGEST_STEPS.length - 1 && (
-              <span className={cn("text-[11px] leading-none", arrowColor)}>→</span>
+            {i < steps.length - 1 && (
+              <span className={cn("text-xs leading-none", arrowColor)}>→</span>
             )}
           </span>
         );
@@ -195,6 +237,8 @@ function StepsBreakdown({ progress, status }: { progress: number; status: string
   );
 }
 
+type FilterType = "all" | "pdf" | "docx";
+
 // ── Page component ────────────────────────────────────────────────────────────
 
 export default function DocsPage() {
@@ -202,9 +246,18 @@ export default function DocsPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterType>("all");
+
+  // File upload state
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // Doc viewer state
+  const [viewingDoc, setViewingDoc] = useState<Doc | null>(null);
+  const [viewUrl, setViewUrl] = useState<string | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+
   const [optimisticDoc, setOptimisticDoc] = useState<Doc | null>(null);
   const [stopping, setStopping] = useState<Set<string>>(new Set());
   const [reindexing, setReindexing] = useState<Set<string>>(new Set());
@@ -253,11 +306,55 @@ export default function DocsPage() {
     };
   }, [isLoaded, isSignedIn]);
 
+  async function handleViewDoc(doc: Doc) {
+    setViewingDoc(doc);
+    setViewUrl(null);
+    setViewLoading(true);
+    try {
+      const token = (await getToken()) ?? undefined;
+      const rawUrl = getDocFileUrl(doc.doc_id);
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(rawUrl, { headers });
+      if (!res.ok) throw new Error("Failed to fetch");
+      const blob = await res.blob();
+      setViewUrl(URL.createObjectURL(blob));
+    } catch {
+      toast.error("Could not load document preview.");
+      setViewingDoc(null);
+    } finally {
+      setViewLoading(false);
+    }
+  }
+
+  async function handleDownload(doc: Doc) {
+    try {
+      const token = (await getToken()) ?? undefined;
+      const rawUrl = getDocDownloadUrl(doc.doc_id);
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(rawUrl, { headers });
+      if (!res.ok) throw new Error("Failed to fetch");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Download failed.");
+    }
+  }
+
+  function closeViewer() {
+    if (viewUrl) URL.revokeObjectURL(viewUrl);
+    setViewingDoc(null);
+    setViewUrl(null);
+  }
+
   async function handleUpload() {
     if (!selectedFile) return;
     setUploading(true);
 
-    // Optimistic "uploading" card
     const tempId = "__uploading__";
     setOptimisticDoc({
       doc_id: tempId,
@@ -265,6 +362,7 @@ export default function DocsPage() {
       uploaded_at: new Date().toISOString(),
       status: "uploading",
       indexed: false,
+      source_type: selectedFile.name.toLowerCase().endsWith(".docx") ? "docx" : "pdf",
       progress_percent: 0,
     });
     setUploadOpen(false);
@@ -324,7 +422,10 @@ export default function DocsPage() {
     }
   }
 
-  const displayDocs = optimisticDoc ? [optimisticDoc, ...docs] : docs;
+  const allDocs = optimisticDoc ? [optimisticDoc, ...docs] : docs;
+  const displayDocs = filter === "all"
+    ? allDocs
+    : allDocs.filter((d) => (d.source_type ?? "pdf") === filter);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -340,12 +441,37 @@ export default function DocsPage() {
       />
 
       <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-10">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-semibold">Document Library</h1>
-          <Button onClick={() => setUploadOpen(true)}>
-            <UploadIcon />
-            Upload PDF
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setUploadOpen(true)}>
+              <UploadIcon />
+              Upload File
+            </Button>
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="inline-flex rounded-lg border border-border p-1 gap-1">
+            {(["all", "pdf", "docx"] as FilterType[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  "px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
+                  filter === f
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+              >
+                {f === "all" ? "All" : f.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {displayDocs.length} {displayDocs.length === 1 ? "Document" : "Documents"}
+          </span>
         </div>
 
         {loading ? (
@@ -356,10 +482,16 @@ export default function DocsPage() {
         ) : displayDocs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
             <FileTextIcon className="size-10 opacity-30" />
-            <p className="text-sm">No documents yet. Upload a PDF to get started.</p>
-            <Button variant="outline" onClick={() => setUploadOpen(true)}>
-              Upload PDF
-            </Button>
+            <p className="text-sm">
+              {filter === "all"
+                ? "No documents yet. Upload a PDF or DOCX file to get started."
+                : `No ${filter.toUpperCase()} documents yet.`}
+            </p>
+            {filter === "all" && (
+              <Button variant="outline" onClick={() => setUploadOpen(true)}>
+                Upload File
+              </Button>
+            )}
           </div>
         ) : (
           <motion.div
@@ -384,25 +516,32 @@ export default function DocsPage() {
                   >
                     <Card className="card-glow flex flex-col h-full">
                       <CardHeader className="pb-3">
-                        <CardTitle
-                          className="text-sm font-semibold leading-snug"
-                          title={doc.filename}
-                        >
-                          {doc.filename}
-                        </CardTitle>
+                        <div className="flex items-start justify-between gap-2">
+                          <CardTitle
+                            className={cn(
+                              "text-sm font-semibold leading-snug break-all",
+                              doc.indexed && "cursor-pointer hover:text-primary transition-colors"
+                            )}
+                            title={doc.indexed ? "Click to preview" : doc.filename}
+                            onClick={() => doc.indexed && handleViewDoc(doc)}
+                          >
+                            {doc.filename}
+                          </CardTitle>
+                          <SourceBadge sourceType={doc.source_type ?? "pdf"} />
+                        </div>
                       </CardHeader>
 
                       <CardContent className="flex-1 pb-3 space-y-3">
                         <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
-                          <dt className="text-muted-foreground/70 font-medium">Uploaded</dt>
-                          <dd className="text-muted-foreground">{formatDate(doc.uploaded_at)}</dd>
-                          <dt className="text-muted-foreground/70 font-medium">PDF ID</dt>
+                          <dt className="text-muted-foreground font-medium">Added</dt>
+                          <dd className="text-foreground">{formatDate(doc.uploaded_at)}</dd>
+                          <dt className="text-muted-foreground font-medium">Doc ID</dt>
                           <dd>
                             {doc.doc_id === "__uploading__" ? (
-                              <span className="text-muted-foreground font-mono text-[10px]">—</span>
+                              <span className="text-muted-foreground font-mono">—</span>
                             ) : (
                               <button
-                                className="group inline-flex items-center gap-1 text-muted-foreground font-mono text-[10px] break-all text-left hover:text-foreground transition-colors cursor-pointer"
+                                className="group inline-flex items-center gap-1 text-muted-foreground font-mono break-all text-left hover:text-foreground transition-colors cursor-pointer"
                                 onClick={() => {
                                   navigator.clipboard.writeText(doc.doc_id);
                                   toast.success("Doc ID copied.");
@@ -416,14 +555,29 @@ export default function DocsPage() {
                           </dd>
                           {doc.page_count != null && (
                             <>
-                              <dt className="text-muted-foreground/70 font-medium">Pages</dt>
-                              <dd className="text-muted-foreground">{doc.page_count}</dd>
+                              <dt className="text-muted-foreground font-medium">Pages</dt>
+                              <dd className="text-foreground">{doc.page_count}</dd>
                             </>
                           )}
                           {doc.index_time_s != null && (
                             <>
-                              <dt className="text-muted-foreground/70 font-medium">Indexed in</dt>
-                              <dd className="text-muted-foreground">{doc.index_time_s}s</dd>
+                              <dt className="text-muted-foreground font-medium">Indexed in</dt>
+                              <dd className="text-foreground">{doc.index_time_s}s</dd>
+                            </>
+                          )}
+                          {doc.ingestion_cost_usd != null && doc.ingestion_cost_usd > 0 && (
+                            <>
+                              <dt className="text-muted-foreground font-medium flex items-center gap-1">
+                                <CoinsIcon className="size-2.5" /> Ingest cost
+                              </dt>
+                              <dd className="text-foreground">
+                                A${(Math.round(doc.ingestion_cost_usd * USD_TO_AUD * 10000) / 10000).toFixed(4)}
+                                {doc.ingestion_tokens != null && (
+                                  <span className="text-muted-foreground ml-1">
+                                    ({doc.ingestion_tokens.toLocaleString()} tokens)
+                                  </span>
+                                )}
+                              </dd>
                             </>
                           )}
                         </dl>
@@ -433,6 +587,7 @@ export default function DocsPage() {
                           <StatusProgress
                             status={doc.status}
                             value={isUploading ? 0 : doc.progress_percent}
+                            sourceType={doc.source_type}
                           />
                         ) : (
                           <StatusBadge status={doc.status} />
@@ -440,7 +595,7 @@ export default function DocsPage() {
 
                         {/* Step breakdown — active or stopped/failed */}
                         {(doc.status === "processing" || doc.status === "stopped" || doc.status === "failed") && (
-                          <StepsBreakdown progress={doc.progress_percent} status={doc.status} />
+                          <StepsBreakdown progress={doc.progress_percent} status={doc.status} sourceType={doc.source_type} />
                         )}
                       </CardContent>
 
@@ -494,9 +649,28 @@ export default function DocsPage() {
                           <>
                             <Button
                               size="sm"
+                              variant="outline"
+                              className="shrink-0"
+                              disabled={!doc.indexed}
+                              onClick={() => handleViewDoc(doc)}
+                              title="Preview document"
+                            >
+                              <EyeIcon className="size-3.5 text-purple-400" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="shrink-0"
+                              onClick={() => void handleDownload(doc)}
+                              title="Download document"
+                            >
+                              <DownloadIcon className="size-3.5 text-blue-400" />
+                            </Button>
+                            <Button
+                              size="sm"
                               className="flex-1"
                               disabled={!doc.indexed}
-                              onClick={() => router.push(`/chat?doc=${doc.doc_id}`)}
+                              onClick={() => router.push(`/chat?doc=${doc.doc_id}&t=${Date.now()}`)}
                             >
                               <MessageSquareIcon />
                               Chat
@@ -526,6 +700,68 @@ export default function DocsPage() {
         © {new Date().getFullYear()} DocuMind
       </footer>
 
+      {/* ── Document Viewer ────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {viewingDoc && (
+          <motion.div
+            key="doc-viewer"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex"
+          >
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={closeViewer}
+            />
+            {/* Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.25, ease: "easeInOut" }}
+              className="relative ml-auto w-full max-w-3xl h-full bg-background border-l border-border flex flex-col shadow-2xl"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  {(viewingDoc.source_type ?? "pdf") === "docx" ? (
+                    <FileIcon className="size-4 text-blue-400 shrink-0" />
+                  ) : (
+                    <FileTextIcon className="size-4 text-red-400 shrink-0" />
+                  )}
+                  <span className="text-sm font-medium truncate">{viewingDoc.filename}</span>
+                </div>
+                <Button size="icon" variant="ghost" className="size-7 shrink-0" onClick={closeViewer}>
+                  <XIcon className="size-3.5" />
+                </Button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-hidden">
+                {viewLoading ? (
+                  <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+                    <Loader2Icon className="animate-spin size-4" />
+                    Loading…
+                  </div>
+                ) : viewUrl ? (
+                  <PdfPane
+                    url={viewUrl}
+                    targetPage={1}
+                    snippet=""
+                    jumpKey={0}
+                    onClose={closeViewer}
+                    hideClose
+                  />
+                ) : null}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Upload File Dialog ─────────────────────────────────────────────── */}
       <Dialog
         open={uploadOpen}
         onOpenChange={(open) => {
@@ -534,10 +770,9 @@ export default function DocsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Upload a PDF</DialogTitle>
+            <DialogTitle>Upload a Document</DialogTitle>
             <DialogDescription>
-              The document will be queued for background processing. You can leave this page — the
-              card will update automatically.
+              Supports PDF and DOCX files. The document will be queued for background processing.
             </DialogDescription>
           </DialogHeader>
 
@@ -550,13 +785,13 @@ export default function DocsPage() {
             ) : (
               <>
                 <FileTextIcon className="mx-auto size-8 text-muted-foreground mb-2 opacity-50" />
-                <p className="text-sm text-muted-foreground">Click to select a PDF</p>
+                <p className="text-sm text-muted-foreground">Click to select a PDF or DOCX file</p>
               </>
             )}
             <input
               ref={fileRef}
               type="file"
-              accept="application/pdf"
+              accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
               className="hidden"
               onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
             />
@@ -580,6 +815,7 @@ export default function DocsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }

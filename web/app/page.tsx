@@ -4,20 +4,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   GitBranch, Search, Zap, Lightbulb,
-  Radio, BookOpen, Brain, Shield,
+  Radio, BookOpen, Brain, FileText,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import Nav from "@/components/nav";
 
 const features = [
-  { icon: GitBranch, title: "Agentic RAG",         desc: "LangGraph pipeline with grading, query rewriting, and hallucination checking. Every answer is verified." },
-  { icon: Search,    title: "Hybrid Search",        desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion" },
-  { icon: Zap,       title: "Semantic Cache",        desc: "Redis vector cache; repeated queries return instantly without re-running the pipeline" },
-  { icon: Lightbulb, title: "HyDE Fallback",         desc: "Hypothetical passage generation on low-confidence retrieval to improve recall" },
-  { icon: Radio,     title: "SSE Streaming",         desc: "Real-time token-by-token output via Server-Sent Events; answers persist to the database even if you navigate away mid-stream" },
-  { icon: BookOpen,  title: "Citations",             desc: "Every answer is grounded with page references; click to jump to the exact passage" },
-  { icon: Shield,    title: "PII Redaction",          desc: "Presidio detects and strips personal information from your query before it reaches the model" },
-  { icon: Brain,     title: "Background Ingestion",   desc: "Celery worker processes PDFs asynchronously with live step-level progress and stop/reindex controls" },
+  { icon: GitBranch,  title: "Agentic RAG",            desc: "LangGraph pipeline with grading, query rewriting, and hallucination checking. Every answer is verified." },
+  { icon: Search,     title: "Hybrid Search",           desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion and cross-encoder reranking." },
+  { icon: Zap,        title: "Semantic Cache",           desc: "Redis vector cache; repeated queries return instantly without re-running the pipeline." },
+  { icon: Lightbulb,  title: "HyDE Fallback",            desc: "Hypothetical passage generation on low-confidence retrieval to improve recall." },
+  { icon: FileText,   title: "Multi-Source Ingestion",   desc: "Upload PDFs or DOCX files. DOCX files are automatically converted to PDF on ingest so both formats go through the same hi_res OCR pipeline." },
+  { icon: Brain,      title: "Contextual Retrieval",     desc: "Gemini prepends a context sentence to every chunk before embedding, dramatically improving retrieval relevance." },
+  { icon: Radio,      title: "SSE Streaming",            desc: "Real-time token-by-token output via Server-Sent Events; answers persist to the database even if you navigate away mid-stream." },
+  { icon: BookOpen,   title: "Citations",                desc: "Every answer is grounded with page references; click to jump to the exact passage." },
 ];
 
 const container = {
@@ -64,9 +64,7 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="text-4xl sm:text-5xl font-bold tracking-tight mb-4 leading-[1.1]"
           >
-            <span className="gradient-heading">Agentic Document</span>
-            <br />
-            <span className="gradient-heading">Intelligence</span>
+            <span className="gradient-heading">Agentic Document Intelligence</span>
           </motion.h1>
 
           <motion.p
@@ -75,8 +73,7 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="text-base text-muted-foreground max-w-xl mx-auto mb-7"
           >
-            Chat with any PDF using a production-grade pipeline: hybrid search,
-            semantic caching, hallucination checking, and real-time streaming.
+            Chat with any PDF or DOCX file using a production-grade pipeline: hybrid search, contextual retrieval, hallucination checking, and real-time streaming.
           </motion.p>
 
           <motion.div

@@ -18,8 +18,11 @@ from worker.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 # Heavy module imports; run in parent process before Celery forks children.
-from app.models import Document as _Document          # noqa: F401
-from rag.ingest import index_document as _index_document  # noqa: F401
+from app.models import Document as _Document, IngestionEvent as _IngestionEvent  # noqa: F401
+from rag.ingest import (                              # noqa: F401
+    index_document as _index_document,
+    index_docx_document as _index_docx_document,
+)
 
 # Pre-load ML models before forking; children inherit via copy-on-write (1x RAM, not Nx).
 try:
@@ -64,8 +67,9 @@ def _clear_step(doc_id: str) -> None:
 
 @celery_app.task(bind=True, name="worker.tasks.ingest_document")
 def ingest_document(self, doc_id: str) -> dict:
-    from app.models import Document
-    from rag.ingest import index_document
+    from app.models import Document, IngestionEvent
+    from rag.ingest import convert_docx_to_pdf, index_document
+    from app.pricing import compute_cost
 
     _set_progress(doc_id, 0)
     _set_step(doc_id, "Starting")
@@ -76,16 +80,22 @@ def ingest_document(self, doc_id: str) -> dict:
             return {"error": "document not found"}
         if doc.status == "stopped":
             return {"error": "task was stopped"}
+        source_type = doc.source_type or "pdf"
         doc.status = "processing"
         db.commit()
 
     _set_progress(doc_id, 5)
-    _set_step(doc_id, "Parsing PDF")
+    _set_step(doc_id, "Converting" if source_type == "docx" else "Parsing")
 
     try:
+        if source_type == "docx":
+            convert_docx_to_pdf(doc_id)
+            _set_progress(doc_id, 8)
+            _set_step(doc_id, "Parsing")
+
         def on_progress(msg: str) -> None:
             lower = msg.lower()
-            if "elements" in lower:
+            if "elements" in lower or "extracting" in lower:
                 _set_step(doc_id, "Extracting")
             elif "chunks" in lower or "generating" in lower or "embedding" in lower:
                 _set_step(doc_id, "Embedding")
@@ -94,7 +104,9 @@ def ingest_document(self, doc_id: str) -> dict:
             _set_progress(doc_id, n)
 
         t0 = time.perf_counter()
-        chunks_indexed, _, page_count = index_document(doc_id, on_progress, on_pct=on_pct)
+
+        chunks_indexed, _, page_count, ingest_tin, ingest_tout = index_document(doc_id, on_progress, on_pct=on_pct)
+
         index_time_s = time.perf_counter() - t0
 
         _set_progress(doc_id, 95)
@@ -105,7 +117,17 @@ def ingest_document(self, doc_id: str) -> dict:
             if doc and doc.status != "stopped":
                 doc.status = "indexed"
                 doc.index_time_s = round(index_time_s, 1)
-                doc.page_count = page_count
+                if page_count:
+                    doc.page_count = page_count
+                if ingest_tin + ingest_tout > 0:
+                    ingest_cost = compute_cost("gemini-2.5-flash", ingest_tin, ingest_tout)
+                    db.add(IngestionEvent(
+                        user_id=doc.user_id,
+                        doc_id=doc.id,
+                        tokens_in=ingest_tin,
+                        tokens_out=ingest_tout,
+                        cost_usd=round(ingest_cost, 6),
+                    ))
                 db.commit()
 
         _set_progress(doc_id, 100)

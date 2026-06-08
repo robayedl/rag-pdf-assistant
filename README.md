@@ -1,6 +1,6 @@
 # DocuMind: Agentic Document Intelligence
 
-> Chat with any PDF using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, real-time streaming, Clerk auth, and Postgres + pgvector storage.
+> Chat with any PDF or DOCX file using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, real-time streaming, Clerk auth, and Postgres + pgvector storage.
 
 [![CI](https://github.com/robayedl/documind/actions/workflows/ci.yml/badge.svg)](https://github.com/robayedl/documind/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
@@ -21,24 +21,23 @@ https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
 
 | Feature | Description |
 |---|---|
-| **Agentic RAG** | LangGraph pipeline with grading, query rewriting, and hallucination checking |
-| **Hybrid Search** | Dense pgvector (HNSW cosine) + sparse PostgreSQL `ts_rank` fused with Reciprocal Rank Fusion (RRF) |
-| **Cross-Encoder Reranking** | `ms-marco-MiniLM-L-6-v2` reranker for high-precision results |
-| **Semantic Cache** | Redis vector cache; repeated or near-identical queries return instantly |
-| **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves |
-| **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency answers |
-| **Streaming Responses** | Server-Sent Events (SSE) for real-time token-by-token output with stop/cancel support; answers persist to Postgres even if client disconnects mid-stream |
-| **Conversation Recovery** | Navigating away or refreshing mid-query recovers the answer automatically, cost and token count restored from DB |
-| **Conversation Memory** | Per-session chat history maintained across turns |
+| **Agentic RAG** | LangGraph pipeline with document grading, query rewriting, hallucination checking, and HyDE fallback on low-confidence retrieval |
+| **Hybrid Search + Reranking** | Dense pgvector (HNSW cosine) + sparse `ts_rank` full-text, fused with RRF and cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) |
+| **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves for better recall |
+| **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency generation; also used for figure captioning and contextual retrieval |
+| **Semantic Cache** | Redis vector cache; near-identical queries return instantly without hitting the LLM |
+| **Multi-Source Ingestion** | PDF and DOCX. DOCX files are converted to PDF via LibreOffice on ingest and then processed through the same hi_res OCR pipeline |
+| **Contextual Retrieval** | Gemini prepends a context sentence to every chunk before embedding (Anthropic-style); dramatically improves retrieval precision for long documents |
+| **Rich Document Parsing** | Tables extracted as Markdown; PDF figures captioned by Gemini multimodal |
 | **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
-| **Rich PDF Parsing** | Table extraction (Markdown) and figure captioning via Gemini multimodal |
-| **Auth** | Clerk: Google + email sign-in, per-user document isolation, JWT validation |
-| **Background Ingestion** | Celery worker processes PDFs asynchronously; UI polls with live step-by-step progress (Queued → Parsing → Extracting → Embedding → Finalizing) |
-| **Postgres + pgvector** | All metadata and embeddings in one Postgres instance |
-| **Cost Tracking** | Per-query token + AUD cost recorded on every assistant message; cost badge per message + hourly spend in chat header; `/usage` dashboard with request/token charts and hourly, daily, weekly, monthly, all-time views |
+| **Background Ingestion** | Celery worker processes documents asynchronously. DOCX adds a Converting step before the shared Parsing -> Extracting -> Embedding -> Finalizing pipeline. UI polls with live progress |
+| **Postgres + pgvector** | All metadata, embeddings, and conversation history in one Postgres instance (HNSW cosine + GIN full-text) |
+| **Streaming + Recovery** | SSE token-by-token output; answer and cost persist to Postgres even on client disconnect; auto-recovered on next page load |
+| **Cost Tracking** | Per-query token + cost on every message; `/usage` dashboard with hourly, daily, weekly, monthly, all-time views |
 | **Rate Limiting** | Redis token-bucket: 30 req/hr, 200 req/day per user; HTTP 429 + `Retry-After`; frontend toast with countdown |
-| **PII Redaction** | Presidio-powered: EMAIL, PHONE, SSN, CREDIT_CARD, PERSON redacted from user query before agent; restored in final answer; opt-in via `PII_REDACTION=true` |
-| **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall |
+| **PII Redaction** | Presidio: EMAIL, PHONE, SSN, CREDIT_CARD scrubbed from the user query before the agent sees it; restored in the final answer |
+| **Auth & Isolation** | Clerk (Google + email); per-user document isolation; JWT/RS256 validation |
+| **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall on a 30-question golden dataset |
 
 ---
 
@@ -79,11 +78,17 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    PDF([PDF Upload]) --> Q[Celery Queue\nRed·is broker]
-    Q --> UP[unstructured\nhi_res]
+    FILE([Upload File]) --> Q
+    Q[Celery Queue\nRedis broker] --> DISP{source_type?}
+
+    DISP -->|docx| LO[LibreOffice\nconvert to PDF]
+    LO --> UP
+    DISP -->|pdf| UP[unstructured\nhi_res + Tesseract]
+
     UP --> T[Tables → Markdown\nchunk]
     UP --> F[Figures → Gemini\nVision caption]
     UP --> TX[Text → 800-token\nchunks]
+
     T & F & TX --> CR{Contextual\nRetrieval?}
     CR -->|yes| CTX[Gemini prepends\ncontext sentence]
     CR -->|no| EMB
@@ -106,8 +111,8 @@ flowchart LR
 | **Database** | PostgreSQL (Supabase or self-hosted via Docker) |
 | **Auth** | Clerk (Google + email, JWT/RS256) |
 | **Cache** | Redis Stack (vector similarity + Celery broker/backend) |
-| **Background Workers** | Celery: async PDF ingestion queue |
-| **PDF Parsing** | unstructured (hi_res), Gemini 2.5 Flash multimodal |
+| **Background Workers** | Celery: async ingestion queue with LibreOffice DOCX conversion |
+| **Document Parsing** | unstructured hi_res, Tesseract OCR, Gemini 2.5 Flash multimodal |
 | **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS |
 | **Evaluation** | RAGAS |
 | **CI/CD** | GitHub Actions, Docker |
@@ -123,7 +128,7 @@ flowchart LR
 - A Google AI Studio API key
 - A Postgres instance; the `docker-compose.yml` spins one up automatically with pgvector
 
-### Option 1: Docker (Recommended)
+### Docker
 
 ```bash
 git clone https://github.com/robayedl/documind.git
@@ -152,42 +157,6 @@ docker compose up --build
 | API Docs | http://localhost:8000/docs |
 | Worker | Background Celery process (no HTTP port, connects to Redis + Postgres) |
 
-### Option 2: Local
-
-```bash
-git clone https://github.com/robayedl/documind.git
-cd documind
-```
-
-```bash
-# system deps for PDF parsing
-# macOS: brew install tesseract poppler
-# Linux: apt-get install tesseract-ocr poppler-utils
-```
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-```bash
-cp .env.example .env                         # fill in GOOGLE_API_KEY, CLERK_JWT_KEY, DATABASE_URL
-cp web/.env.local.example web/.env.local     # fill in NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY
-```
-
-```bash
-make run   # API on :8000
-```
-
-```bash
-# In a separate terminal: Celery background worker
-celery -A worker.celery_app worker --loglevel=info
-```
-
-```bash
-cd web && npm install && npm run dev   # UI on :3000
-```
-
 ---
 
 ## Auth Setup (Clerk)
@@ -209,14 +178,14 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | Health check (no auth) |
-| `GET` | `/documents` | List current user's documents (includes `status`, `progress_percent`, `page_count`) |
-| `POST` | `/documents` | Upload a PDF; enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
+| `GET` | `/documents` | List current user's documents (includes `status`, `progress_percent`, `page_count`, `source_type`) |
+| `POST` | `/documents` | Upload a PDF or DOCX; enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
 | `GET` | `/documents/{doc_id}/status` | Poll ingestion status: `{status, progress_percent, step, page_count}` |
 | `POST` | `/documents/{doc_id}/stop` | Cancel a pending or processing ingestion job |
 | `POST` | `/documents/{doc_id}/reindex` | Re-enqueue a stopped or failed document |
-| `DELETE` | `/documents/{doc_id}` | Delete a document, its chunks, and its PDF file |
+| `DELETE` | `/documents/{doc_id}` | Delete a document, its chunks, and its file |
 | `POST` | `/documents/{doc_id}/index/stream` | Manual re-index with SSE progress (for debugging) |
-| `GET` | `/documents/{doc_id}/file` | Download the original PDF |
+| `GET` | `/documents/{doc_id}/file` | Download the original PDF or DOCX file |
 | `POST` | `/query/stream` | Ask a question; SSE streaming tokens + citations; answer + cost persisted to DB regardless of client disconnect |
 | `GET` | `/conversations/{session_id}` | Fetch persisted messages for a session (used for client-side recovery after navigation) |
 | `GET` | `/usage/me?period=` | Token and AUD cost summary for a given period (`1h`, `24h`, `7d`, `30d`, `all`); defaults to `all` |
@@ -280,8 +249,8 @@ documind/
 │   ├── chains/           # Retrieval (pgvector + ts_rank + HyDE), reranking, generation
 │   ├── store.py          # pgvector CRUD (add, search, clear)
 │   ├── cache.py          # Redis semantic cache
-│   └── ingest.py         # PDF parsing: text, tables, figures
-├── migrations/           # SQL migrations: 001_init, 002_pgvector, 003_cost
+│   └── ingest.py         # Unified PDF pipeline: hi_res + Tesseract OCR; LibreOffice DOCX conversion
+├── migrations/           # SQL migrations: 001_init, 002_pgvector, 003_cost, 004_source_type
 ├── legacy/
 │   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
 │   └── streamlit/        # Previous Streamlit UI (kept for reference)

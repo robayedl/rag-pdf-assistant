@@ -1,4 +1,4 @@
-import { chat, getDocStatus, getMyUsage, listDocs, uploadDoc } from "@/lib/api";
+import { chat, fetchConversation, getDocStatus, getMyUsage, listDocs, uploadDoc } from "@/lib/api";
 
 function mockFetch(body: unknown, ok = true, status = 200) {
   global.fetch = jest.fn().mockResolvedValue({
@@ -132,5 +132,99 @@ describe("getMyUsage", () => {
   it("throws on non-ok response", async () => {
     mockFetch({}, false, 500);
     await expect(getMyUsage()).rejects.toThrow("Failed to fetch usage");
+  });
+});
+
+describe("fetchConversation", () => {
+  it("returns messages on success", async () => {
+    const msgs = [
+      { role: "user", content: "hi", tokens_in: 5, tokens_out: 0, cost_usd: 0 },
+      { role: "assistant", content: "hello", tokens_in: 0, tokens_out: 8, cost_usd: 0.001 },
+    ];
+    mockFetch(msgs);
+    const result = await fetchConversation("sess-1", "tok_abc");
+    expect(result).toHaveLength(2);
+    expect(result[1].role).toBe("assistant");
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain("/conversations/sess-1");
+  });
+
+  it("returns empty array on non-ok response", async () => {
+    mockFetch({}, false, 404);
+    const result = await fetchConversation("missing");
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array on network error", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error("Network error"));
+    const result = await fetchConversation("sess-x");
+    expect(result).toEqual([]);
+  });
+});
+
+describe("chat SSE stream", () => {
+  /** Build a mock body with a getReader() that feeds chunks then signals done. */
+  function makeBody(chunks: string[]) {
+    const encoder = new TextEncoder();
+    let idx = 0;
+    return {
+      getReader: () => ({
+        read: async () => {
+          if (idx < chunks.length) {
+            return { done: false, value: encoder.encode(chunks[idx++]) };
+          }
+          return { done: true, value: undefined };
+        },
+      }),
+    };
+  }
+
+  it("fires onDone via explicit done event", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeBody(["event: token\ndata: Hello\n\n", "event: done\ndata: {}\n\n"]),
+    });
+    const onToken = jest.fn();
+    const onDone = jest.fn();
+    chat({ doc_id: "d", question: "q" }, undefined, () => {}, onToken, () => {}, onDone, () => {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onToken).toHaveBeenCalledWith("Hello");
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onDone fallback when done event lacks trailing \\n\\n", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeBody(["event: token\ndata: Hi\n\n", "event: done\ndata: {}"]),
+    });
+    const onToken = jest.fn();
+    const onDone = jest.fn();
+    chat({ doc_id: "d", question: "q" }, undefined, () => {}, onToken, () => {}, onDone, () => {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onToken).toHaveBeenCalledWith("Hi");
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires onDone fallback when stream closes with no done event", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeBody(["event: token\ndata: World\n\n"]),
+    });
+    const onToken = jest.fn();
+    const onDone = jest.fn();
+    chat({ doc_id: "d", question: "q" }, undefined, () => {}, onToken, () => {}, onDone, () => {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onToken).toHaveBeenCalledWith("World");
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire onDone twice when explicit done event is received", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeBody(["event: done\ndata: {}\n\n"]),
+    });
+    const onDone = jest.fn();
+    chat({ doc_id: "d", question: "q" }, undefined, () => {}, () => {}, () => {}, onDone, () => {});
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onDone).toHaveBeenCalledTimes(1);
   });
 });

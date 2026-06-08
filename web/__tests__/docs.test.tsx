@@ -129,21 +129,21 @@ describe("DocsPage — Chat button state", () => {
 describe("DocsPage — upload dialog", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  // Render with an existing doc so only the header "Upload PDF" button is present
+  // Render with an existing doc so only the header "Upload File" button is present
   // (the empty-state button is hidden when docs.length > 0).
 
-  it("opens upload dialog when Upload PDF button clicked", async () => {
+  it("opens upload dialog when Upload File button clicked", async () => {
     (api.listDocs as jest.Mock).mockResolvedValue([makeDoc()]);
     await act(async () => { render(<DocsPage />); });
-    const uploadBtn = await screen.findByRole("button", { name: /upload pdf/i });
+    const uploadBtn = await screen.findByRole("button", { name: /upload file/i });
     await userEvent.click(uploadBtn);
-    expect(screen.getByText(/upload a pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/upload a document/i)).toBeInTheDocument();
   });
 
   it("Upload button in dialog is disabled when no file selected", async () => {
     (api.listDocs as jest.Mock).mockResolvedValue([makeDoc()]);
     await act(async () => { render(<DocsPage />); });
-    await userEvent.click(await screen.findByRole("button", { name: /upload pdf/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /upload file/i }));
     const submitBtn = screen.getByRole("button", { name: /^upload$/i });
     expect(submitBtn).toBeDisabled();
   });
@@ -162,7 +162,7 @@ describe("DocsPage — upload dialog", () => {
     });
 
     await act(async () => { render(<DocsPage />); });
-    await userEvent.click(await screen.findByRole("button", { name: /upload pdf/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /upload file/i }));
 
     const file = new File(["content"], "paper.pdf", { type: "application/pdf" });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;

@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import DocWatcher from "@/components/doc-watcher";
+import ChatWatcher from "@/components/chat-watcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -38,6 +39,7 @@ export default function RootLayout({
       >
         <body className="min-h-full flex flex-col bg-background text-foreground">
           <DocWatcher />
+          <ChatWatcher />
           {children}
           <Toaster />
         </body>

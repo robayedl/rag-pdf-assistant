@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 
-# Node functions
-
 def retrieve(state: GraphState) -> GraphState:
     """Hybrid search + reranking with HyDE fallback on low-confidence results."""
     try:
@@ -49,8 +47,6 @@ def fallback(state: GraphState) -> GraphState:
     return {"generation": "I do not know based on the provided document."}
 
 
-# Conditional edge functions
-
 def decide_after_grading(
     state: GraphState,
 ) -> Literal["generate", "rewrite_query", "fallback"]:
@@ -72,8 +68,6 @@ def decide_after_hallucination(
         return "generate"
     return "fallback"
 
-
-# Graph builder
 
 @lru_cache(maxsize=1)
 def build_graph():
@@ -105,8 +99,6 @@ def build_graph():
 
     return graph.compile()
 
-
-# Public entry point
 
 _NODE_LABELS: dict[str, str] = {
     "retrieve":            "Searching the document…",

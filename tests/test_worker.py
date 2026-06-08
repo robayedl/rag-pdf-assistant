@@ -25,7 +25,7 @@ def _make_session(doc):
     return session
 
 
-def _run(doc, index_return=(15, "pgvector", 5), index_raise=None, doc_id=None):
+def _run(doc, index_return=(15, "pgvector", 5, 0, 0), index_raise=None, doc_id=None):
     """Execute the task with external I/O fully mocked. Returns the doc mock."""
     if doc_id is None:
         doc_id = str(uuid.uuid4())
@@ -56,7 +56,7 @@ def test_success_sets_indexed_status():
 
 def test_success_stores_index_time_and_page_count():
     doc = _make_doc("pending")
-    _run(doc, index_return=(20, "pgvector", 7))
+    _run(doc, index_return=(20, "pgvector", 7, 0, 0))
     assert doc.index_time_s is not None
     assert doc.page_count == 7
 
@@ -72,7 +72,7 @@ def test_success_progress_reaches_100():
          patch("worker.tasks._clear_progress"), \
          patch("worker.tasks._set_step"), \
          patch("worker.tasks._clear_step"), \
-         patch("rag.ingest.index_document", return_value=(5, "pgvector", 3)):
+         patch("rag.ingest.index_document", return_value=(5, "pgvector", 3, 0, 0)):
         ingest_document(doc_id)
 
     assert 100 in captured_progress

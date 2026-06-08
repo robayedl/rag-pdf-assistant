@@ -11,6 +11,8 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     poppler-utils \
     libgl1 \
     libglib2.0-0 \
+    libreoffice-writer \
+    libreoffice-common \
   && rm -rf /var/lib/apt/lists/* \
   && pip install uv --no-cache-dir
 

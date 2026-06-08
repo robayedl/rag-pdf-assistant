@@ -16,10 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { useAuth } from "@clerk/nextjs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useAuth, useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { chat, Citation, Doc, fetchConversation, getDocFileUrl, listDocs, USD_TO_AUD, type MetaEvent, type UsageEvent } from "@/lib/api";
+import { clearPendingChat, setPendingChat } from "@/lib/chat-pending";
 import {
   ChatSession,
   StoredMessage,
@@ -43,7 +44,10 @@ interface ActivePdf {
   page: number;
   snippet: string;
   jumpKey: number;
+  /** Pages to show; undefined = all pages (full-doc mode). */
+  limitToPages?: number[];
 }
+
 
 function uid() {
   return Math.random().toString(36).slice(2);
@@ -65,6 +69,7 @@ export default function ChatClient() {
   const docParam = params.get("doc");
   const sessionParam = params.get("session");
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
+  const { user } = useUser();
   const authTokenRef = useRef<string | undefined>(undefined);
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -77,16 +82,25 @@ export default function ChatClient() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [chatCost, setChatCost] = useState<number>(0);
 
-  // PDF pane state
   const [pdfOpen, setPdfOpen] = useState(false);
   const [activePdf, setActivePdf] = useState<ActivePdf | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
+  const isMountedRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeSessionRef = useRef<ChatSession | null>(null);
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Prevents duplicate session creation when docParam fires multiple effects
+  const lastHandledDocParam = useRef<string | null>(null);
+
+  // Track mount state so stream callbacks don't clear pendingChat on unmount
+  // (the ChatWatcher needs to detect the answer and show the toast).
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -103,9 +117,52 @@ export default function ChatClient() {
         const indexed = data.filter((d) => d.indexed);
         setDocs(indexed);
 
+        async function loadAndRecover(session: ChatSession) {
+          setActiveId(session.id);
+          activeSessionRef.current = session;
+          let msgs: StoredMessage[] = session.messages;
+
+          setMessages(msgs.map((m) => ({ ...m })));
+          setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
+
+          if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
+            setMessages((prev) => [
+              ...prev,
+              { id: uid(), role: "assistant" as const, content: "", streaming: true, status: "Recovering…" },
+            ]);
+
+            let lastDb = await fetchConversation(session.id, t ?? undefined).then((r) => r[r.length - 1]).catch(() => null);
+            if (!lastDb || lastDb.role !== "assistant") {
+              for (let i = 0; i < 8 && (!lastDb || lastDb.role !== "assistant"); i++) {
+                await new Promise<void>((r) => setTimeout(r, 2000));
+                const all = await fetchConversation(session.id, t ?? undefined).catch(() => []);
+                lastDb = all[all.length - 1] ?? null;
+              }
+            }
+
+            if (lastDb?.role === "assistant") {
+              const recovered: StoredMessage = {
+                id: uid(), role: "assistant",
+                content: lastDb.content, citations: lastDb.citations,
+                tokens_in: lastDb.tokens_in, tokens_out: lastDb.tokens_out, cost_usd: lastDb.cost_usd,
+              };
+              msgs = [...msgs, recovered];
+              const updated = { ...session, messages: msgs, updated_at: new Date().toISOString() };
+              activeSessionRef.current = updated;
+              setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
+              setMessages(msgs.map((m) => ({ ...m })));
+              setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
+              clearPendingChat();
+            } else {
+              setMessages(msgs.map((m) => ({ ...m })));
+            }
+          }
+        }
+
         if (docParam) {
           const doc = indexed.find((d) => d.doc_id === docParam);
           if (doc) {
+            lastHandledDocParam.current = docParam;
             const session = createSession(doc.doc_id, doc.filename);
             setSessions((prev) => {
               const next = [session, ...prev];
@@ -120,33 +177,7 @@ export default function ChatClient() {
         } else if (sessionParam) {
           const session = saved.find((s) => s.id === sessionParam);
           if (session) {
-            setActiveId(session.id);
-            activeSessionRef.current = session;
-            let msgs: StoredMessage[] = session.messages;
-
-            // Recover missed answer if user navigated away before the stream completed
-            if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
-              const dbMsgs = await fetchConversation(session.id, t ?? undefined);
-              const lastDb = dbMsgs[dbMsgs.length - 1];
-              if (lastDb?.role === "assistant") {
-                const recovered: StoredMessage = {
-                  id: uid(),
-                  role: "assistant",
-                  content: lastDb.content,
-                  citations: lastDb.citations,
-                  tokens_in: lastDb.tokens_in,
-                  tokens_out: lastDb.tokens_out,
-                  cost_usd: lastDb.cost_usd,
-                };
-                msgs = [...msgs, recovered];
-                const updated = { ...session, messages: msgs, updated_at: new Date().toISOString() };
-                activeSessionRef.current = updated;
-                setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
-              }
-            }
-
-            setMessages(msgs.map((m) => ({ ...m })));
-            setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
+            await loadAndRecover(session);
           }
         }
       } catch {}
@@ -160,19 +191,71 @@ export default function ChatClient() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Handle ?doc= param changes, including when user navigates from /docs to /chat
+  // while already on the /chat page (init effect won't re-run in that case).
+  useEffect(() => {
+    if (!docParam) {
+      lastHandledDocParam.current = null;
+      return;
+    }
+    if (!isLoaded || !isSignedIn) return;
+    if (lastHandledDocParam.current === docParam) return;
+    if (!docs.length) return;
+
+    lastHandledDocParam.current = docParam;
+    const doc = docs.find((d) => d.doc_id === docParam);
+    if (!doc) return;
+
+    const session = createSession(doc.doc_id, doc.filename);
+    setSessions((prev) => {
+      upsertSession(prev, session, userId ?? "");
+      return [session, ...prev];
+    });
+    setActiveId(session.id);
+    activeSessionRef.current = session;
+    setMessages([]);
+    setChatCost(0);
+    router.replace(`/chat?session=${session.id}`);
+  }, [docParam, docs, isLoaded, isSignedIn]);
+
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
 
+  // Poll DB until the assistant message lands (handles race where stream
+  // completes just after the user navigates back to the chat page).
+  async function pollForAnswer(sessionId: string, attempts = 8, delayMs = 2000) {
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) await new Promise<void>((r) => setTimeout(r, delayMs));
+      const dbMsgs = await fetchConversation(sessionId, authTokenRef.current);
+      const last = dbMsgs[dbMsgs.length - 1];
+      if (last?.role === "assistant") return last;
+    }
+    return null;
+  }
+
   async function openSession(session: ChatSession) {
-    if (streaming) abortRef.current?.abort();
+    // Silence any in-flight stream callbacks but don't abort — let the backend
+    // finish so it writes to DB; recovery polling will find the response.
+    cancelledRef.current = true;
     setStreaming(false);
+    setPdfOpen(false);
+    setActivePdf(null);
     setActiveId(session.id);
     activeSessionRef.current = session;
     let msgs: StoredMessage[] = session.messages;
 
+    setMessages(msgs.map((m) => ({ ...m })));
+    setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
+    router.replace(`/chat?session=${session.id}`);
+
     if (msgs.length > 0 && msgs[msgs.length - 1].role === "user") {
-      const dbMsgs = await fetchConversation(session.id, authTokenRef.current);
-      const lastDb = dbMsgs[dbMsgs.length - 1];
-      if (lastDb?.role === "assistant") {
+      const placeholderId = uid();
+      setMessages((prev) => [
+        ...prev,
+        { id: placeholderId, role: "assistant" as const, content: "", streaming: true, status: "Recovering…" },
+      ]);
+
+      const lastDb = await pollForAnswer(session.id);
+      if (lastDb) {
         const recovered: StoredMessage = {
           id: uid(),
           role: "assistant",
@@ -186,15 +269,20 @@ export default function ChatClient() {
         const updated = { ...session, messages: msgs, updated_at: new Date().toISOString() };
         activeSessionRef.current = updated;
         setSessions((prev) => upsertSession(prev, updated, userId ?? ""));
+        setMessages(msgs.map((m) => ({ ...m })));
+        setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
+      } else {
+        setMessages(msgs.map((m) => ({ ...m })));
       }
     }
-
-    setMessages(msgs.map((m) => ({ ...m })));
-    setChatCost(msgs.reduce((s, m) => s + (m.cost_usd ?? 0), 0));
-    router.replace(`/chat?session=${session.id}`);
+    cancelledRef.current = false;
   }
 
   function startNewChat(doc: Doc) {
+    cancelledRef.current = true;
+    setStreaming(false);
+    setPdfOpen(false);
+    setActivePdf(null);
     const session = createSession(doc.doc_id, doc.filename);
     setSessions((prev) => {
       const next = [session, ...prev];
@@ -220,7 +308,6 @@ export default function ChatClient() {
     }
   }
 
-  // Open the PDF pane for a specific citation (fetches PDF as authenticated blob URL)
   async function openCitation(citation: Citation, docId: string) {
     const rawUrl = getDocFileUrl(docId);
     const freshToken = await getToken();
@@ -232,12 +319,14 @@ export default function ChatClient() {
           .then((b) => URL.createObjectURL(b))
       : Promise.resolve(rawUrl);
 
+    const citedPage = citation.page > 0 ? citation.page : 1;
     load.then((url) => {
       setActivePdf((prev) => ({
         url,
-        page: citation.page > 0 ? citation.page : 1,
+        page: citedPage,
         snippet: citation.text ?? "",
         jumpKey: (prev?.jumpKey ?? 0) + 1,
+        limitToPages: [citedPage],
       }));
       setPdfOpen(true);
     });
@@ -307,6 +396,7 @@ export default function ChatClient() {
     cancelledRef.current = true;
     abortRef.current?.abort();
     if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    clearPendingChat();
     setStreaming(false);
     setMessages((prev) => {
       if (prev.length === 0) return prev;
@@ -371,11 +461,14 @@ export default function ChatClient() {
       id: uid(), role: "assistant", content: "", streaming: true, status: "Thinking…",
     };
 
+    let pendingMsgCount = 0;
     setMessages((prev) => {
+      pendingMsgCount = prev.length;
       const next = [...prev, userMsg, assistantMsg];
       persistMessages(toStored(next.slice(0, -1)));
       return next;
     });
+    setPendingChat({ sessionId: activeSession.id, docName: activeSession.doc_name, messageCount: pendingMsgCount, sentAt: new Date().toISOString() });
 
     abortRef.current = new AbortController();
 
@@ -401,6 +494,9 @@ export default function ChatClient() {
       (duration_ms) => {
         if (cancelledRef.current) return;
         if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+        // Only clear pending when still on the chat page — if the user navigated
+        // away, leave it for ChatWatcher to detect and show a toast.
+        if (isMountedRef.current) clearPendingChat();
         setMessages((prev) => {
           const next = prev.map((m, i) =>
             i === prev.length - 1
@@ -415,6 +511,7 @@ export default function ChatClient() {
       (err) => {
         if (cancelledRef.current) return;
         if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+        if (isMountedRef.current) clearPendingChat();
         const msg = friendlyError(err);
         setMessages((prev) => {
           const next = prev.map((m, i) =>
@@ -430,7 +527,7 @@ export default function ChatClient() {
       abortRef.current.signal,
       (u: UsageEvent) => {
         if (cancelledRef.current) return;
-        setChatCost((prev) => prev + u.cost_usd);
+        setChatCost((prev) => Math.round((prev + u.cost_usd) * 1e8) / 1e8);
         updateLast((m) => ({
           ...m,
           tokens_in: u.tokens_in,
@@ -478,7 +575,7 @@ export default function ChatClient() {
                   onClick={() => void openSession(s)}
                 >
                   <p className="text-xs font-medium truncate pr-5">{s.doc_name}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {s.messages.length > 0
                       ? s.messages[s.messages.length - 1].content.slice(0, 40) + "…"
                       : relativeTime(s.created_at)}
@@ -512,25 +609,24 @@ export default function ChatClient() {
           <>
             {/* Header */}
             <div className="border-b border-border px-4 h-12 flex items-center gap-2 shrink-0 bg-background/80 backdrop-blur-sm">
-              <span className="text-sm font-medium truncate text-muted-foreground flex-1">
+              <span className="text-sm font-medium truncate flex-1">
                 {activeSession.doc_name}
               </span>
-              <span className="text-[10px] text-muted-foreground/70 shrink-0">
-                {messages.reduce((s, m) => s + (m.tokens_in ?? 0) + (m.tokens_out ?? 0), 0).toLocaleString()} tokens · A${(chatCost * USD_TO_AUD).toFixed(4)}
+              <span className="text-xs text-muted-foreground shrink-0">
+                {messages.reduce((s, m) => s + (m.tokens_in ?? 0) + (m.tokens_out ?? 0), 0).toLocaleString()} tokens · A${(Math.round(chatCost * USD_TO_AUD * 10000) / 10000).toFixed(4)}
               </span>
               <Button
                 variant="ghost"
                 size="icon"
                 className="size-8 shrink-0"
                 onClick={() => {
-                  if (!pdfOpen) {
-                    // Open to show placeholder if no citation loaded yet
-                    setPdfOpen(true);
-                  } else {
-                    setPdfOpen(false);
-                  }
+                  setPdfOpen((o) => {
+                    // Opening from the header button shows the full document.
+                    if (!o) setActivePdf((prev) => prev ? { ...prev, limitToPages: undefined } : prev);
+                    return !o;
+                  });
                 }}
-                title={pdfOpen ? "Close PDF pane" : "Open PDF pane"}
+                title={pdfOpen ? "Close document pane" : "Open document pane"}
               >
                 {pdfOpen
                   ? <PanelRightCloseIcon className="size-4" />
@@ -558,6 +654,9 @@ export default function ChatClient() {
                         className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
                       >
                         <Avatar className="size-7 shrink-0 mt-0.5">
+                          {msg.role === "user" && user?.imageUrl && (
+                            <AvatarImage src={user.imageUrl} alt="profile" />
+                          )}
                           <AvatarFallback className={`text-[10px] ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-red-500/15 text-red-400"}`}>
                             {msg.role === "user"
                               ? <UserIcon className="size-3.5" />
@@ -582,18 +681,23 @@ export default function ChatClient() {
                                 </span>
                               ) : (
                                 <>
-                                  {msg.content || (msg.interrupted && !msg.streaming
-                                    ? <span className="italic text-muted-foreground text-xs">Response interrupted. Try asking again.</span>
-                                    : null
-                                  )}
+                                  {msg.content}
+                                  {/* Streaming indicators */}
                                   {msg.streaming && msg.content && (
                                     <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse rounded-full align-middle" />
                                   )}
                                   {msg.streaming && !msg.content && (
                                     <Loader2Icon className="size-3 animate-spin text-muted-foreground" />
                                   )}
+                                  {/* Fallbacks for done state with no content */}
+                                  {!msg.streaming && !msg.content && !msg.interrupted && (
+                                    <span className="italic text-muted-foreground text-xs">No response was generated.</span>
+                                  )}
+                                  {!msg.streaming && !msg.content && msg.interrupted && (
+                                    <span className="italic text-muted-foreground text-xs">Response interrupted. Try asking again.</span>
+                                  )}
                                   {msg.interrupted && msg.content && !msg.streaming && (
-                                    <span className="block text-[10px] text-muted-foreground/60 mt-1 italic">(interrupted)</span>
+                                    <span className="block text-xs text-muted-foreground mt-1 italic">(interrupted)</span>
                                   )}
                                 </>
                               )}
@@ -622,7 +726,7 @@ export default function ChatClient() {
                                   key={i}
                                   title={c.text ?? `Page ${c.page}`}
                                   onClick={() => void openCitation(c, activeSession.doc_id)}
-                                  className="text-[10px] bg-primary/15 hover:bg-primary/30 text-primary px-2 py-0.5 rounded-full cursor-pointer border border-primary/20 hover:border-primary/50 transition-colors active:scale-95"
+                                  className="text-xs bg-primary/15 hover:bg-primary/30 text-primary px-2 py-0.5 rounded-full cursor-pointer border border-primary/20 hover:border-primary/50 transition-colors active:scale-95"
                                 >
                                   p.{c.page}
                                 </button>
@@ -631,7 +735,7 @@ export default function ChatClient() {
                           )}
 
                           {(msg.duration_ms !== undefined || (msg.cost_usd !== undefined && msg.cost_usd > 0)) && (
-                            <span className="text-[10px] text-muted-foreground/60 px-1">
+                            <span className="text-xs text-muted-foreground px-1">
                               {msg.duration_ms !== undefined && (
                                 <>
                                   {`Answered in ${(msg.duration_ms / 1000).toFixed(1)}s`}
@@ -639,7 +743,7 @@ export default function ChatClient() {
                                 </>
                               )}
                               {!msg.from_cache && msg.cost_usd !== undefined && msg.cost_usd > 0 && (
-                                `${msg.duration_ms !== undefined ? " Costing " : ""}A$${(msg.cost_usd * USD_TO_AUD).toFixed(4)} · ${((msg.tokens_in ?? 0) + (msg.tokens_out ?? 0)).toLocaleString()} tokens`
+                                `${msg.duration_ms !== undefined ? " Costing " : ""}A$${(Math.round(msg.cost_usd * USD_TO_AUD * 10000) / 10000).toFixed(4)} · ${((msg.tokens_in ?? 0) + (msg.tokens_out ?? 0)).toLocaleString()} tokens`
                               )}
                             </span>
                           )}
@@ -703,6 +807,7 @@ export default function ChatClient() {
               targetPage={activePdf?.page ?? 1}
               snippet={activePdf?.snippet ?? ""}
               jumpKey={activePdf?.jumpKey ?? 0}
+              limitToPages={activePdf?.limitToPages}
               onClose={() => setPdfOpen(false)}
             />
           </motion.div>
@@ -728,7 +833,7 @@ export default function ChatClient() {
                   onClick={() => startNewChat(doc)}
                 >
                   <p className="font-medium truncate">{doc.filename}</p>
-                  <p className="text-[10px] text-muted-foreground font-mono break-all select-all">{doc.doc_id}</p>
+                  <p className="text-xs text-muted-foreground font-mono break-all select-all">{doc.doc_id}</p>
                 </button>
               ))}
             </div>

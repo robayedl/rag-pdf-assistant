@@ -72,7 +72,7 @@ def test_html_to_markdown_fallback_on_import_error(monkeypatch):
 def test_table_becomes_single_markdown_chunk():
     from rag.ingest import _build_docs_from_elements
     elements = [make_table("Model BLEU ...", SAMPLE_HTML_TABLE, page=2)]
-    docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+    docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
     assert len(docs) == 1
     doc = docs[0]
     assert doc.metadata["element_type"] == "table"
@@ -86,7 +86,7 @@ def test_table_with_no_html_falls_back_to_text():
     from types import SimpleNamespace
     el = Table(text="col1 col2\nval1 val2")
     el.metadata = SimpleNamespace(page_number=1, text_as_html=None)
-    docs = _build_docs_from_elements([el], "doc1", "test.pdf", False, "")
+    docs, _, _ = _build_docs_from_elements([el], "doc1", "test.pdf", False, "")
     assert len(docs) == 1
     assert "col1" in docs[0].page_content
 
@@ -97,7 +97,7 @@ def test_narrative_is_chunked():
     from rag.ingest import _build_docs_from_elements
     long_text = (SAMPLE_NARRATIVE + " ") * 20  # force multiple chunks
     elements = [make_narrative(long_text, page=1)]
-    docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+    docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
     assert len(docs) >= 2
     for d in docs:
         assert d.metadata["element_type"] == "text"
@@ -107,7 +107,7 @@ def test_narrative_is_chunked():
 def test_title_element_produces_chunk():
     from rag.ingest import _build_docs_from_elements
     elements = [make_title("Attention Is All You Need", page=1)]
-    docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+    docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
     assert len(docs) == 1
     assert docs[0].metadata["element_type"] == "text"
 
@@ -121,9 +121,9 @@ def test_figure_creates_chunk_with_caption(tmp_path, monkeypatch):
     img_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)  # minimal PNG-like bytes
 
     monkeypatch.setenv("EXTRACT_FIGURES", "true")
-    with patch("rag.ingest._caption_figure", return_value="A bar chart showing accuracy."):
+    with patch("rag.ingest._caption_figure", return_value=("A bar chart showing accuracy.", 0, 0)):
         elements = [make_image(str(img_path), page=3)]
-        docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+        docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
 
     assert len(docs) == 1
     doc = docs[0]
@@ -140,7 +140,7 @@ def test_figure_skipped_when_disabled(tmp_path, monkeypatch):
     img_path.write_bytes(b"PNG")
     monkeypatch.setenv("EXTRACT_FIGURES", "false")
     elements = [make_image(str(img_path), page=1)]
-    docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+    docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
     assert docs == []
 
 
@@ -158,8 +158,8 @@ def test_figure_cap_respected(tmp_path, monkeypatch):
         img_paths.append(str(p))
 
     elements = [make_image(p, page=1) for p in img_paths]
-    with patch("rag.ingest._caption_figure", return_value="Some figure."):
-        docs = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
+    with patch("rag.ingest._caption_figure", return_value=("Some figure.", 0, 0)):
+        docs, _, _ = _build_docs_from_elements(elements, "doc1", "test.pdf", False, "")
 
     assert len(docs) == 2
 
@@ -169,7 +169,7 @@ def test_figure_cap_respected(tmp_path, monkeypatch):
 def test_caption_figure_returns_empty_for_missing_file():
     from rag.ingest import _caption_figure
     result = _caption_figure("/nonexistent/path/fig.png")
-    assert result == ""
+    assert result == ("", 0, 0)
 
 
 def test_caption_figure_calls_gemini(tmp_path):
@@ -183,7 +183,7 @@ def test_caption_figure_calls_gemini(tmp_path):
     with patch("rag.llm.get_llm", return_value=mock_llm):
         result = _caption_figure(str(img))
 
-    assert result == "A trend line showing model loss."
+    assert result[0] == "A trend line showing model loss."
 
 
 def test_caption_figure_returns_empty_on_api_error(tmp_path):
@@ -197,7 +197,7 @@ def test_caption_figure_returns_empty_on_api_error(tmp_path):
     with patch("rag.llm.get_llm", return_value=mock_llm):
         result = _caption_figure(str(img))
 
-    assert result == ""
+    assert result == ("", 0, 0)
 
 
 # index_document integration
@@ -220,7 +220,7 @@ def test_index_document_normal_path(tmp_path, monkeypatch):
     with patch("rag.ingest.extract_elements", return_value=elements), \
          patch("rag.ingest.clear_document"), \
          patch("rag.ingest.add_documents") as mock_add:
-        count, collection, page_count = ingest_mod.index_document(doc_id)
+        count, collection, page_count, _, _ = ingest_mod.index_document(doc_id)
 
     assert count > 0
     mock_add.assert_called_once()
@@ -246,7 +246,7 @@ def test_index_document_zero_page_count_on_empty_elements(tmp_path, monkeypatch)
 
     with patch("rag.ingest.extract_elements", return_value=[]), \
          patch("rag.ingest.clear_document"):
-        count, collection, page_count = ingest_mod.index_document("test123")
+        count, collection, page_count, _, _ = ingest_mod.index_document("test123")
 
     assert count == 0
     assert page_count == 0
