@@ -26,6 +26,7 @@ describe("Landing page", () => {
     expect(screen.getByText("Agentic RAG")).toBeInTheDocument();
     expect(screen.getByText("Hybrid Search")).toBeInTheDocument();
     expect(screen.getByText("Semantic Cache")).toBeInTheDocument();
-    expect(screen.getByText("SSE Streaming")).toBeInTheDocument();
+    expect(screen.getByText("Streaming + Recovery")).toBeInTheDocument();
+    expect(screen.getByText("MCP Server")).toBeInTheDocument();
   });
 });

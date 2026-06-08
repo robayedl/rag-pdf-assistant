@@ -4,20 +4,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   GitBranch, Search, Zap, Lightbulb,
-  Radio, BookOpen, Brain, FileText,
+  Radio, BookOpen, Brain, Plug,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import Nav from "@/components/nav";
 
 const features = [
-  { icon: GitBranch,  title: "Agentic RAG",            desc: "LangGraph pipeline with grading, query rewriting, and hallucination checking. Every answer is verified." },
-  { icon: Search,     title: "Hybrid Search",           desc: "pgvector HNSW + PostgreSQL full-text search fused with Reciprocal Rank Fusion and cross-encoder reranking." },
-  { icon: Zap,        title: "Semantic Cache",           desc: "Redis vector cache; repeated queries return instantly without re-running the pipeline." },
-  { icon: Lightbulb,  title: "HyDE Fallback",            desc: "Hypothetical passage generation on low-confidence retrieval to improve recall." },
-  { icon: FileText,   title: "Multi-Source Ingestion",   desc: "Upload PDFs or DOCX files. DOCX files are automatically converted to PDF on ingest so both formats go through the same hi_res OCR pipeline." },
-  { icon: Brain,      title: "Contextual Retrieval",     desc: "Gemini prepends a context sentence to every chunk before embedding, dramatically improving retrieval relevance." },
-  { icon: Radio,      title: "SSE Streaming",            desc: "Real-time token-by-token output via Server-Sent Events; answers persist to the database even if you navigate away mid-stream." },
-  { icon: BookOpen,   title: "Citations",                desc: "Every answer is grounded with page references; click to jump to the exact passage." },
+  { icon: GitBranch, title: "Agentic RAG",          desc: "LangGraph agent grades retrieved chunks, rewrites low-quality queries, and checks every answer for hallucinations before delivery." },
+  { icon: Search,    title: "Hybrid Search",         desc: "Fuses dense pgvector HNSW cosine search with sparse PostgreSQL BM25 via Reciprocal Rank Fusion, then re-scores with a cross-encoder reranker." },
+  { icon: Brain,     title: "Contextual Retrieval",  desc: "Gemini prepends a document-aware context sentence to every chunk before embedding — an Anthropic-validated technique that dramatically lifts retrieval precision." },
+  { icon: Lightbulb, title: "HyDE Fallback",         desc: "When the reranker score falls below threshold, generates a hypothetical answer passage and re-retrieves using its embedding to rescue ambiguous queries." },
+  { icon: Plug,      title: "MCP Server",            desc: "Exposes search, list, and get tools via Model Context Protocol so Claude Desktop and Cursor can query your document library as native AI tools." },
+  { icon: Zap,       title: "Semantic Cache",        desc: "Redis vector cache returns near-identical answers in milliseconds without re-running the retrieval or generation pipeline." },
+  { icon: Radio,     title: "Streaming + Recovery",  desc: "Token-by-token SSE output with answers and costs persisted to Postgres mid-stream — nothing is lost even on client disconnect." },
+  { icon: BookOpen,  title: "Citations",             desc: "Every answer is grounded with page-level source references; click any badge to jump directly to the passage in the inline PDF viewer." },
 ];
 
 const container = {
@@ -35,7 +35,6 @@ export default function LandingPage() {
     <div className="flex flex-col min-h-screen">
       <Nav />
 
-      {/* Ambient glow */}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 -z-10"
@@ -46,7 +45,6 @@ export default function LandingPage() {
       />
 
       <main className="flex-1">
-        {/* Hero */}
         <section className="max-w-6xl mx-auto px-4 pt-16 pb-12 text-center">
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -91,7 +89,6 @@ export default function LandingPage() {
           </motion.div>
         </section>
 
-        {/* Features */}
         <section className="max-w-6xl mx-auto px-4 pb-14">
           <motion.div
             variants={container}

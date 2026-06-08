@@ -23,25 +23,30 @@ https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
 |---|---|
 | **Agentic RAG** | LangGraph pipeline with document grading, query rewriting, hallucination checking, and HyDE fallback on low-confidence retrieval |
 | **Hybrid Search + Reranking** | Dense pgvector (HNSW cosine) + sparse `ts_rank` full-text, fused with RRF and cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) |
+| **Contextual Retrieval** | Gemini prepends a context sentence to every chunk before embedding (Anthropic-style); dramatically improves retrieval precision for long documents |
 | **HyDE Fallback** | On low reranker confidence, generates a hypothetical passage and re-retrieves for better recall |
-| **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency generation; also used for figure captioning and contextual retrieval |
+| **MCP Server** | stdio + HTTP/SSE transports; `search_documents`, `list_documents`, `get_document` tools; API-key auth per user. Setup guide in the UI under **API Keys** |
+| **Streaming + Recovery** | SSE token-by-token output; answer and cost persist to Postgres even on client disconnect; auto-recovered on next page load |
+| **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall on a 30-question golden dataset |
 | **Semantic Cache** | Redis vector cache; near-identical queries return instantly without hitting the LLM |
 | **Multi-Source Ingestion** | PDF and DOCX. DOCX files are converted to PDF via LibreOffice on ingest and then processed through the same hi_res OCR pipeline |
-| **Contextual Retrieval** | Gemini prepends a context sentence to every chunk before embedding (Anthropic-style); dramatically improves retrieval precision for long documents |
 | **Rich Document Parsing** | Tables extracted as Markdown; PDF figures captioned by Gemini multimodal |
 | **PDF Viewer** | Inline PDF pane with citation-click-to-page-jump and snippet highlighting |
 | **Background Ingestion** | Celery worker processes documents asynchronously. DOCX adds a Converting step before the shared Parsing -> Extracting -> Embedding -> Finalizing pipeline. UI polls with live progress |
-| **Postgres + pgvector** | All metadata, embeddings, and conversation history in one Postgres instance (HNSW cosine + GIN full-text) |
-| **Streaming + Recovery** | SSE token-by-token output; answer and cost persist to Postgres even on client disconnect; auto-recovered on next page load |
+| **Gemini 2.5 Flash** | Google's fastest frontier LLM for low-latency generation; also used for figure captioning and contextual retrieval |
 | **Cost Tracking** | Per-query token + cost on every message; `/usage` dashboard with hourly, daily, weekly, monthly, all-time views |
+| **Postgres + pgvector** | All metadata, embeddings, and conversation history in one Postgres instance (HNSW cosine + GIN full-text) |
 | **Rate Limiting** | Redis token-bucket: 30 req/hr, 200 req/day per user; HTTP 429 + `Retry-After`; frontend toast with countdown |
 | **PII Redaction** | Presidio: EMAIL, PHONE, SSN, CREDIT_CARD scrubbed from the user query before the agent sees it; restored in the final answer |
 | **Auth & Isolation** | Clerk (Google + email); per-user document isolation; JWT/RS256 validation |
-| **RAGAS Evaluation** | Faithfulness, answer relevancy, context precision & recall on a 30-question golden dataset |
 
 ---
 
 ## Architecture
+
+<table width="100%" border="1" style="border-collapse:collapse;border-color:#30363d;">
+<tr>
+<td width="50%" valign="top" align="center" style="padding:12px;border-color:#30363d;">
 
 **Query Pipeline**
 
@@ -74,10 +79,13 @@ flowchart TD
     FB --> E2([END])
 ```
 
+</td>
+<td width="50%" valign="top" align="center" style="padding:12px;border-color:#30363d;">
+
 **Ingestion Pipeline**
 
 ```mermaid
-flowchart LR
+flowchart TD
     FILE([Upload File]) --> Q
     Q[Celery Queue\nRedis broker] --> DISP{source_type?}
 
@@ -97,6 +105,10 @@ flowchart LR
     EMB --> TS[(PostgreSQL\nts_rank / GIN)]
 ```
 
+</td>
+</tr>
+</table>
+
 ---
 
 ## Tech Stack
@@ -114,6 +126,7 @@ flowchart LR
 | **Background Workers** | Celery: async ingestion queue with LibreOffice DOCX conversion |
 | **Document Parsing** | unstructured hi_res, Tesseract OCR, Gemini 2.5 Flash multimodal |
 | **Frontend** | Next.js 16 (App Router), shadcn/ui, Tailwind CSS |
+| **MCP** | Model Context Protocol server (stdio + HTTP/SSE), API-key auth |
 | **Evaluation** | RAGAS |
 | **CI/CD** | GitHub Actions, Docker |
 
@@ -178,18 +191,16 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | Health check (no auth) |
-| `GET` | `/documents` | List current user's documents (includes `status`, `progress_percent`, `page_count`, `source_type`) |
-| `POST` | `/documents` | Upload a PDF or DOCX; enqueues background ingestion, returns `{doc_id, status: "pending"}` immediately |
-| `GET` | `/documents/{doc_id}/status` | Poll ingestion status: `{status, progress_percent, step, page_count}` |
-| `POST` | `/documents/{doc_id}/stop` | Cancel a pending or processing ingestion job |
-| `POST` | `/documents/{doc_id}/reindex` | Re-enqueue a stopped or failed document |
-| `DELETE` | `/documents/{doc_id}` | Delete a document, its chunks, and its file |
-| `POST` | `/documents/{doc_id}/index/stream` | Manual re-index with SSE progress (for debugging) |
-| `GET` | `/documents/{doc_id}/file` | Download the original PDF or DOCX file |
-| `POST` | `/query/stream` | Ask a question; SSE streaming tokens + citations; answer + cost persisted to DB regardless of client disconnect |
-| `GET` | `/conversations/{session_id}` | Fetch persisted messages for a session (used for client-side recovery after navigation) |
-| `GET` | `/usage/me?period=` | Token and AUD cost summary for a given period (`1h`, `24h`, `7d`, `30d`, `all`); defaults to `all` |
-| `GET` | `/usage/me/history?period=` | Time-series data points (bucket, tokens, requests, cost) for charting; granularity varies by period |
+| `GET` | `/documents` | List documents with status, progress, and page count |
+| `POST` | `/documents` | Upload a PDF or DOCX; ingestion runs in the background, returns `{doc_id}` immediately |
+| `GET` | `/documents/{doc_id}/status` | Poll ingestion progress: `{status, progress_percent, step}` |
+| `POST` | `/documents/{doc_id}/stop` · `/reindex` | Cancel or re-enqueue an ingestion job |
+| `DELETE` | `/documents/{doc_id}` | Delete document, chunks, and file |
+| `POST` | `/query/stream` | Ask a question; SSE token stream + citations, persisted on disconnect |
+| `GET` | `/conversations/{session_id}` | Fetch persisted messages for session recovery |
+| `GET` | `/usage/me` | Cost and token summary; `?period=1h\|24h\|7d\|30d\|all` |
+| `POST` · `GET` · `DELETE` | `/api-keys` · `/api-keys/{id}` | Create, list, and revoke MCP API keys |
+| `GET` | `/mcp/sse` | MCP HTTP/SSE endpoint (auth via `X-API-Key`) |
 
 ---
 
@@ -199,32 +210,29 @@ All endpoints (except `GET /health`) require `Authorization: Bearer <clerk-jwt>`
 
 | Variable | Default | Description |
 |---|---|---|
-| `GOOGLE_API_KEY` | - | **Required.** Google AI Studio API key |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | - | **Required.** Clerk publishable key (baked into web build) |
-| `CLERK_SECRET_KEY` | - | **Required.** Clerk secret key (passed to web container at runtime) |
-| `CLERK_JWT_KEY` | - | **Required in prod.** RSA public key for JWT validation (PEM, quoted) |
-| `DATABASE_URL` | `postgresql://documind:documind@localhost:5432/documind` | Postgres connection string |
-| `STORAGE_DIR` | `./storage` | Directory for uploaded PDFs and figures |
-| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `REDIS_URL` | `redis://localhost:6379` | Redis Stack connection URL |
+| `GOOGLE_API_KEY` | — | **Required.** Google AI Studio key |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk publishable key |
+| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key |
+| `CLERK_JWT_KEY` | — | **Required in prod.** RSA PEM public key for JWT validation |
+| `DATABASE_URL` | `postgresql://documind:documind@` `localhost:5432/documind` | Postgres DSN |
+| `REDIS_URL` | `redis://localhost:6379` | Redis URL |
+| `STORAGE_DIR` | `./storage` | Directory for uploaded files |
+| `CORS_ORIGINS` | `http://localhost:3000` | Allowed origins (comma-separated) |
+| `EXTRACT_FIGURES` | `true` | Caption PDF figures with Gemini Vision |
+| `CONTEXTUAL_RETRIEVAL` | `true` | Prepend context sentence to each chunk before embedding |
 | `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity threshold for cache hit |
-| `CACHE_TTL_SECONDS` | `86400` | Cache TTL (seconds) |
-| `HYDE_THRESHOLD` | `0.3` | Reranker score below which HyDE is triggered |
-| `EXTRACT_FIGURES` | `true` | Caption figures with Gemini multimodal (max 30/doc) |
-| `CONTEXTUAL_RETRIEVAL` | `true` | Prepend per-chunk context before embedding |
-| `CONTEXTUALIZE_WORKERS` | `8` | Parallel LLM workers for contextual retrieval during indexing |
-| `TESSERACT_CMD` | _(PATH)_ | Full path to `tesseract` binary |
-| `RATE_LIMIT_PER_HOUR` | `30` | Max chat queries per user per hour |
-| `RATE_LIMIT_PER_DAY` | `200` | Max chat queries per user per day |
-| `PII_REDACTION` | `true` | Enable Presidio PII redaction on user queries (`true`/`false`) |
+| `HYDE_THRESHOLD` | `0.3` | Reranker score below which HyDE triggers |
+| `RATE_LIMIT_PER_HOUR` | `30` | Max queries per user per hour |
+| `RATE_LIMIT_PER_DAY` | `200` | Max queries per user per day |
+| `PII_REDACTION` | `true` | Strip PII from queries via Presidio |
 
 **Frontend** (`web/.env.local`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | - | **Required.** Clerk frontend publishable key |
-| `CLERK_SECRET_KEY` | - | **Required.** Clerk secret key (server-side auth) |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API base URL for the frontend |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | — | **Required.** Clerk publishable key |
+| `CLERK_SECRET_KEY` | — | **Required.** Clerk secret key |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL |
 
 ---
 
@@ -235,12 +243,16 @@ documind/
 ├── app/
 │   ├── auth.py           # Clerk JWT validation (FastAPI dependency)
 │   ├── db.py             # SQLAlchemy async engine + session factory
-│   ├── models.py         # ORM models: User, Document, Conversation, Message
+│   ├── models.py         # ORM models: User, Document, Conversation, Message, ApiKey
 │   ├── pricing.py        # Model cost table + compute_cost()
 │   ├── ratelimit.py      # Redis token-bucket rate limiter
 │   ├── redact.py         # Presidio PII redaction / restore
 │   ├── storage.py        # File-system helpers (PDF read/write)
-│   └── main.py           # FastAPI routes
+│   └── main.py           # FastAPI routes + MCP HTTP/SSE mount
+├── mcp_server/
+│   ├── auth.py           # API key hashing + DB validation
+│   ├── server.py         # FastMCP tools: search_documents, list_documents, get_document
+│   └── __main__.py       # stdio entry point: python -m mcp_server
 ├── worker/
 │   ├── celery_app.py     # Celery app config (broker = Redis)
 │   └── tasks.py          # ingest_document task: pending → processing → indexed / failed / stopped
@@ -250,12 +262,12 @@ documind/
 │   ├── store.py          # pgvector CRUD (add, search, clear)
 │   ├── cache.py          # Redis semantic cache
 │   └── ingest.py         # Unified PDF pipeline: hi_res + Tesseract OCR; LibreOffice DOCX conversion
-├── migrations/           # SQL migrations: 001_init, 002_pgvector, 003_cost, 004_source_type
+├── migrations/           # SQL migrations: 001_init → 005_api_keys
 ├── legacy/
 │   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
 │   └── streamlit/        # Previous Streamlit UI (kept for reference)
 ├── web/                  # Next.js 16 frontend (App Router, shadcn/ui, Clerk)
-│   ├── app/              # Pages: /, /chat, /docs, /usage, /login, /about, /how-to-use
+│   ├── app/              # Pages: /, /chat, /docs, /usage, /api-keys, /about, /how-to-use
 │   ├── components/       # Nav, PdfPane, DocWatcher (global bg poller), shadcn primitives
 │   ├── lib/              # Typed API client with auth headers (api.ts)
 │   └── proxy.ts          # Clerk route protection for /chat, /docs, and /usage

@@ -229,6 +229,41 @@ export function getDocDownloadUrl(docId: string): string {
   return `${API_URL}/documents/${docId}/download`;
 }
 
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at?: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyRecord {
+  key: string;
+}
+
+export async function listApiKeys(token?: string): Promise<ApiKeyRecord[]> {
+  const res = await fetch(`${API_URL}/api-keys`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error("Failed to fetch API keys");
+  return res.json();
+}
+
+export async function createApiKey(name: string, token?: string): Promise<ApiKeyCreated> {
+  const res = await fetch(`${API_URL}/api-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("Failed to create API key");
+  return res.json();
+}
+
+export async function revokeApiKey(keyId: string, token?: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api-keys/${keyId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error("Failed to revoke API key");
+}
+
 export function chat(
   params: ChatParams,
   token: string | undefined,

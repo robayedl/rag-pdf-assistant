@@ -9,7 +9,9 @@ logging.getLogger("unstructured").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", message=".*max_size.*", category=FutureWarning)
 
+import hashlib
 import json
+import secrets
 import shutil
 import time
 import uuid
@@ -35,7 +37,7 @@ import redis as _redis_mod
 
 from app.auth import ClerkUser, current_user
 from app.db import engine, get_db
-from app.models import Base, Conversation, Document as DocModel, IngestionEvent, Message, User
+from app.models import ApiKey, Base, Conversation, Document as DocModel, IngestionEvent, Message, User
 from app.pricing import compute_cost
 from app.ratelimit import check_and_consume
 from app.redact import redact, restore
@@ -159,6 +161,22 @@ async def _init_db() -> None:
             END
             $$;
         """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id      TEXT        NOT NULL REFERENCES users(clerk_id) ON DELETE CASCADE,
+                key_hash     TEXT        NOT NULL UNIQUE,
+                name         TEXT        NOT NULL DEFAULT 'Default',
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                last_used_at TIMESTAMPTZ
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS api_keys_user_id_idx  ON api_keys (user_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS api_keys_key_hash_idx ON api_keys (key_hash)"
+        ))
 
 
 @asynccontextmanager
@@ -289,6 +307,23 @@ class StreamQueryRequest(BaseModel):
     question: str = Field(..., min_length=2)
     session_id: Optional[str] = Field(None)
 
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field("Default", min_length=1, max_length=80)
+
+
+class ApiKeyRecord(BaseModel):
+    id: str
+    name: str
+    created_at: str
+    last_used_at: Optional[str] = None
+
+
+class ApiKeyCreated(BaseModel):
+    id: str
+    name: str
+    key: str  # shown once, never stored
+    created_at: str
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -1134,3 +1169,149 @@ def _is_no_answer(text: str) -> bool:
 
 def _sse(event: str, data: str) -> str:
     return f"event: {event}\ndata: {data}\n\n"
+
+
+def _hash_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@app.post("/api-keys", response_model=ApiKeyCreated, status_code=201)
+async def create_api_key(
+    body: ApiKeyCreate,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiKeyCreated:
+    await _ensure_user(db, user)
+    raw_key = f"dm_{secrets.token_urlsafe(32)}"
+    record = ApiKey(
+        user_id=user.user_id,
+        key_hash=_hash_key(raw_key),
+        name=body.name,
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return ApiKeyCreated(
+        id=str(record.id),
+        name=record.name,
+        key=raw_key,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+@app.get("/api-keys", response_model=List[ApiKeyRecord])
+async def list_api_keys(
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[ApiKeyRecord]:
+    await _ensure_user(db, user)
+    result = await db.execute(
+        select(ApiKey)
+        .where(ApiKey.user_id == user.user_id)
+        .order_by(ApiKey.created_at.desc())
+    )
+    rows = result.scalars().all()
+    return [
+        ApiKeyRecord(
+            id=str(r.id),
+            name=r.name,
+            created_at=r.created_at.isoformat(),
+            last_used_at=r.last_used_at.isoformat() if r.last_used_at else None,
+        )
+        for r in rows
+    ]
+
+
+@app.delete("/api-keys/{key_id}", status_code=204)
+async def revoke_api_key(
+    key_id: str,
+    user: ClerkUser = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        key_uuid = uuid.UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Key not found.")
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.id == key_uuid, ApiKey.user_id == user.user_id)
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Key not found.")
+    await db.delete(record)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# MCP HTTP/SSE transport  — mounted at /mcp for Cursor and other HTTP clients
+# ---------------------------------------------------------------------------
+
+try:
+    from mcp.server.sse import SseServerTransport as _SseTransport
+    from mcp_server.auth import validate_api_key as _validate_mcp_key
+    from mcp_server.server import _user_id_var as _mcp_user_var
+    from mcp_server.server import mcp as _mcp
+
+    _sse = _SseTransport("/mcp/messages/")
+
+    class _MCPAuthMiddleware:
+        """Pure-ASGI middleware: validates X-API-Key before handing off to SSE."""
+
+        def __init__(self, asgi_app):
+            self._app = asgi_app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] not in ("http", "websocket"):
+                await self._app(scope, receive, send)
+                return
+
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            raw_key = headers.get(b"x-api-key", b"").decode()
+            user_id = _validate_mcp_key(raw_key)
+            if not user_id:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [[b"content-type", b"application/json"]],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": b'{"detail":"Invalid or missing API key"}',
+                    }
+                )
+                return
+
+            token = _mcp_user_var.set(user_id)
+            try:
+                await self._app(scope, receive, send)
+            finally:
+                _mcp_user_var.reset(token)
+
+    async def _mcp_sse_handler(scope, receive, send):
+        async with _sse.connect_sse(scope, receive, send) as (read, write):
+            await _mcp._mcp_server.run(
+                read, write, _mcp._mcp_server.create_initialization_options()
+            )
+
+    async def _mcp_post_handler(scope, receive, send):
+        await _sse.handle_post_message(scope, receive, send)
+
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    _mcp_asgi = _MCPAuthMiddleware(
+        Starlette(
+            routes=[
+                Route("/sse", endpoint=_mcp_sse_handler),
+                Route("/messages/", endpoint=_mcp_post_handler, methods=["POST"]),
+            ]
+        )
+    )
+    app.mount("/mcp", _mcp_asgi)
+    logger.info("MCP HTTP/SSE transport mounted at /mcp")
+
+except ImportError:
+    logger.warning("mcp package not installed — HTTP/SSE transport disabled")
