@@ -1252,7 +1252,7 @@ try:
     from mcp_server.server import _user_id_var as _mcp_user_var
     from mcp_server.server import mcp as _mcp
 
-    _sse = _SseTransport("/mcp/messages/")
+    _mcp_sse_transport = _SseTransport("/mcp/messages/")
 
     class _MCPAuthMiddleware:
         """Pure-ASGI middleware: validates X-API-Key before handing off to SSE."""
@@ -1291,13 +1291,13 @@ try:
                 _mcp_user_var.reset(token)
 
     async def _mcp_sse_handler(scope, receive, send):
-        async with _sse.connect_sse(scope, receive, send) as (read, write):
+        async with _mcp_sse_transport.connect_sse(scope, receive, send) as (read, write):
             await _mcp._mcp_server.run(
                 read, write, _mcp._mcp_server.create_initialization_options()
             )
 
     async def _mcp_post_handler(scope, receive, send):
-        await _sse.handle_post_message(scope, receive, send)
+        await _mcp_sse_transport.handle_post_message(scope, receive, send)
 
     from starlette.applications import Starlette
     from starlette.routing import Route
