@@ -212,11 +212,11 @@ export default function ApiKeysClient() {
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold mt-0.5">2</span>
             <div className="space-y-1 flex-1">
               <p className="text-sm font-medium">Generate an API key</p>
-              <p className="text-xs text-muted-foreground">Use the form above. The key is shown only once — copy it immediately after generation.</p>
+              <p className="text-xs text-muted-foreground">Use the form above. The key is shown only once, copy it immediately after generation.</p>
             </div>
           </div>
 
-          {/* Step 3 — Claude Desktop */}
+          {/* Step 3: Claude Desktop */}
           <div className="flex gap-3">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold mt-0.5">3</span>
             <div className="space-y-2 flex-1">
@@ -233,13 +233,13 @@ export default function ApiKeysClient() {
               <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs text-muted-foreground space-y-1.5">
                 <p>
                   Replace every <code className="bg-muted px-1 rounded">/absolute/path/to/documind</code> with your
-                  actual repo path — e.g. <code className="bg-muted px-1 rounded">/Users/you/projects/documind</code>.
+                  actual repo path, e.g. <code className="bg-muted px-1 rounded">/Users/you/projects/documind</code>.
                   Both <code className="bg-muted px-1 rounded">command</code> and <code className="bg-muted px-1 rounded">PYTHONPATH</code> need it.
                 </p>
                 <p>
                   Use the project&apos;s <strong className="text-foreground">venv Python</strong>{" "}
                   (<code className="bg-muted px-1 rounded">.venv/bin/python3</code>). Claude Desktop runs processes
-                  with a minimal PATH — a bare <code className="bg-muted px-1 rounded">python</code> won&apos;t be found.
+                  with a minimal PATH, a bare <code className="bg-muted px-1 rounded">python</code> won&apos;t be found.
                 </p>
                 <p>Replace <code className="bg-muted px-1 rounded">dm_YOUR_KEY_HERE</code> with the key from step 2.</p>
               </div>
@@ -252,13 +252,13 @@ export default function ApiKeysClient() {
             </div>
           </div>
 
-          {/* Step 4 — Cursor */}
+          {/* Step 4: Cursor */}
           <div className="flex gap-3">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold mt-0.5">4</span>
             <div className="space-y-2 flex-1">
               <div className="flex items-center gap-2">
                 <Globe className="size-4 text-primary" />
-                <p className="text-sm font-medium">Cursor (HTTP/SSE — optional)</p>
+                <p className="text-sm font-medium">Cursor (HTTP/SSE, optional)</p>
               </div>
               <p className="text-xs text-muted-foreground">In Cursor Settings → MCP, add a new server:</p>
               <div className="space-y-2">
@@ -281,7 +281,7 @@ export default function ApiKeysClient() {
           </DialogHeader>
 
           <p className="text-sm text-muted-foreground -mt-1">
-            Copy it now — it won&apos;t be shown again.
+            Copy it now, it won&apos;t be shown again.
           </p>
 
           <div className="rounded-lg border border-border bg-muted/40 p-3">

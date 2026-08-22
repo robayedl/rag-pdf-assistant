@@ -37,7 +37,7 @@ def render_pdf_viewer() -> None:
             resp.raise_for_status()
             st.session_state[cache_key] = resp.content
         except requests.ConnectionError:
-            st.warning("Cannot load PDF — is the backend running?")
+            st.warning("Cannot load PDF. Is the backend running?")
             return
         except Exception as e:
             st.warning(f"Could not load PDF: {e}")

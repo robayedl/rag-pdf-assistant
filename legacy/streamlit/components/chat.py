@@ -13,8 +13,8 @@ _WELCOME = """
 
 1. Upload a PDF using the sidebar on the left
 2. Wait a moment while it indexes
-3. Type your question below — the assistant will answer using only your document
-4. Ask follow-up questions; the assistant remembers the conversation
+3. Type your question below. The assistant will answer using only your document
+4. Ask follow-up questions. The assistant remembers the conversation
 5. Use **Clear Chat** in the sidebar to start fresh
 """
 

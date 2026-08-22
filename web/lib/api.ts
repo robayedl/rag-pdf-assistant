@@ -40,7 +40,19 @@ export interface Citation {
   page: number;
   chunk_id: number;
   source: string;
+  url?: string | null;
   text?: string;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface ToolUsage {
+  web_search: { used: boolean; count: number; results: WebSearchResult[] };
+  calculator: { used: boolean; expression: string; result: string };
 }
 
 export interface ChatParams {
@@ -85,6 +97,7 @@ export interface ConversationMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  tool_usage?: ToolUsage | null;
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
@@ -275,7 +288,8 @@ export function chat(
   signal?: AbortSignal,
   onUsage?: (usage: UsageEvent) => void,
   onMeta?: (meta: MetaEvent) => void,
-  onPii?: () => void
+  onPii?: () => void,
+  onToolUsage?: (toolUsage: ToolUsage) => void
 ): void {
   const startTime = Date.now();
   fetch(`${API_URL}/query/stream`, {
@@ -312,6 +326,8 @@ export function chat(
           try { if (onMeta) onMeta(JSON.parse(data)); } catch { }
         } else if (event === "pii") {
           if (onPii) onPii();
+        } else if (event === "tool_usage") {
+          try { if (onToolUsage) onToolUsage(JSON.parse(data)); } catch { }
         } else if (event === "done") {
           if (!doneFired) { doneFired = true; onDone(Date.now() - startTime); }
         } else if (event === "error") onError(data);

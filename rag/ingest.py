@@ -171,7 +171,7 @@ def extract_elements(pdf_path: Path, doc_id: str) -> list:
         cmd = _tesseract_cmd or "tesseract"
         raise RuntimeError(
             f"Tesseract not found at '{cmd}'. "
-            "Install it (macOS: brew install tesseract; Ubuntu: apt install tesseract-ocr) "
+            "Install it (macOS: brew install tesseract, Ubuntu: apt install tesseract-ocr) "
             "and set TESSERACT_CMD in your .env if it is not on PATH."
         )
     kwargs: dict = {

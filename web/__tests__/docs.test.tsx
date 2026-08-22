@@ -1,9 +1,9 @@
 /**
- * Tests for /docs page — background ingestion UX:
+ * Tests for /docs page: background ingestion UX:
  *   - Document cards render with correct status badges
  *   - Progress bar shown only for pending/processing docs
  *   - Chat button disabled while doc is not indexed
- *   - Simplified upload dialog (no SSE spinner — just Upload button)
+ *   - Simplified upload dialog (no SSE spinner, just Upload button)
  *   - Polling starts when active docs are present
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
@@ -55,7 +55,7 @@ function makeDoc(overrides: Partial<api.Doc> = {}): api.Doc {
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
-describe("DocsPage — document card rendering", () => {
+describe("DocsPage: document card rendering", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("shows 'Ready' badge for an indexed document", async () => {
@@ -104,7 +104,7 @@ describe("DocsPage — document card rendering", () => {
   });
 });
 
-describe("DocsPage — Chat button state", () => {
+describe("DocsPage: Chat button state", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("enables Chat for an indexed doc", async () => {
@@ -126,7 +126,7 @@ describe("DocsPage — Chat button state", () => {
   });
 });
 
-describe("DocsPage — upload dialog", () => {
+describe("DocsPage: upload dialog", () => {
   beforeEach(() => jest.clearAllMocks());
 
   // Render with an existing doc so only the header "Upload File" button is present
@@ -174,12 +174,12 @@ describe("DocsPage — upload dialog", () => {
       expect(api.uploadDoc).toHaveBeenCalledTimes(1);
     });
 
-    // indexDocStream must NOT be called — ingestion is background now
+    // indexDocStream must NOT be called, ingestion is background now
     expect(api.indexDocStream).not.toHaveBeenCalled();
   });
 });
 
-describe("DocsPage — polling", () => {
+describe("DocsPage: polling", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
@@ -213,12 +213,12 @@ describe("DocsPage — polling", () => {
     await act(async () => { jest.advanceTimersByTime(6000); });
     await act(async () => { await Promise.resolve(); });
 
-    // No additional polls — all docs already indexed
+    // No additional polls, all docs already indexed
     expect((api.listDocs as jest.Mock).mock.calls.length).toBe(callsAfterFirstFetch);
   });
 });
 
-describe("DocsPage — Stop button", () => {
+describe("DocsPage: Stop button", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("shows Stop button for a pending doc", async () => {
@@ -262,7 +262,7 @@ describe("DocsPage — Stop button", () => {
   });
 });
 
-describe("DocsPage — Reindex button", () => {
+describe("DocsPage: Reindex button", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("shows Reindex button for a stopped doc", async () => {

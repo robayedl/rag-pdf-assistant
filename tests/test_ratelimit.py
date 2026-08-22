@@ -38,17 +38,17 @@ def test_blocked_at_daily_limit():
 
 
 def test_hourly_limit_takes_priority_over_daily():
-    # Both exceeded — hourly retry_after is smaller than daily
+    # Both exceeded: hourly retry_after is smaller than daily
     with patch("app.ratelimit._redis", _make_redis_pipeline(31, 201)):
         from app.ratelimit import check_and_consume
         allowed, retry_after = check_and_consume("user_4")
     assert allowed is False
-    # Hourly window ≤ 3600 seconds; daily is up to 86400
+    # Hourly window is at most 3600 seconds, daily is up to 86400
     assert retry_after <= 3600
 
 
 def test_exactly_at_limit_is_allowed():
-    # count == limit should still be allowed; blocking starts at count > limit
+    # count == limit should still be allowed, blocking starts at count > limit
     with patch("app.ratelimit._redis", _make_redis_pipeline(30, 200)), \
          patch("app.ratelimit.RATE_LIMIT_PER_HOUR", 30), \
          patch("app.ratelimit.RATE_LIMIT_PER_DAY", 200):

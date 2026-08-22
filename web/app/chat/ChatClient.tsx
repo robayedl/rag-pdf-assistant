@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   SendIcon, Loader2Icon, BotIcon, UserIcon,
   PlusIcon, Trash2Icon, MessageSquareIcon, CopyIcon, CheckIcon,
-  PanelRightOpenIcon, PanelRightCloseIcon,
+  PanelRightOpenIcon, PanelRightCloseIcon, GlobeIcon, CalculatorIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { chat, Citation, Doc, fetchConversation, getDocFileUrl, listDocs, USD_TO_AUD, type MetaEvent, type UsageEvent } from "@/lib/api";
+import { chat, Citation, Doc, fetchConversation, getDocFileUrl, listDocs, USD_TO_AUD, type MetaEvent, type ToolUsage, type UsageEvent } from "@/lib/api";
 import { clearPendingChat, setPendingChat } from "@/lib/chat-pending";
 import {
   ChatSession,
@@ -44,13 +44,31 @@ interface ActivePdf {
   page: number;
   snippet: string;
   jumpKey: number;
-  /** Pages to show; undefined = all pages (full-doc mode). */
+  /** Pages to show. Undefined means all pages (full-doc mode). */
   limitToPages?: number[];
 }
 
 
 function uid() {
   return Math.random().toString(36).slice(2);
+}
+
+function hostnameOf(url?: string | null): string {
+  if (!url) return "source";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url.slice(0, 24);
+  }
+}
+
+function isSafeHttpUrl(url?: string | null): boolean {
+  if (!url) return false;
+  try {
+    return ["http:", "https:"].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
 }
 
 function relativeTime(iso: string): string {
@@ -84,6 +102,9 @@ export default function ChatClient() {
 
   const [pdfOpen, setPdfOpen] = useState(false);
   const [activePdf, setActivePdf] = useState<ActivePdf | null>(null);
+
+  const [webSourcesOpen, setWebSourcesOpen] = useState(false);
+  const [webSources, setWebSources] = useState<ToolUsage["web_search"]["results"]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const cancelledRef = useRef(false);
@@ -143,7 +164,7 @@ export default function ChatClient() {
             if (lastDb?.role === "assistant") {
               const recovered: StoredMessage = {
                 id: uid(), role: "assistant",
-                content: lastDb.content, citations: lastDb.citations,
+                content: lastDb.content, citations: lastDb.citations, tool_usage: lastDb.tool_usage,
                 tokens_in: lastDb.tokens_in, tokens_out: lastDb.tokens_out, cost_usd: lastDb.cost_usd,
               };
               msgs = [...msgs, recovered];
@@ -233,8 +254,8 @@ export default function ChatClient() {
   }
 
   async function openSession(session: ChatSession) {
-    // Silence any in-flight stream callbacks but don't abort — let the backend
-    // finish so it writes to DB; recovery polling will find the response.
+    // Silence any in-flight stream callbacks but don't abort. Let the backend
+    // finish so it writes to DB, recovery polling will find the response.
     cancelledRef.current = true;
     setStreaming(false);
     setPdfOpen(false);
@@ -261,6 +282,7 @@ export default function ChatClient() {
           role: "assistant",
           content: lastDb.content,
           citations: lastDb.citations,
+          tool_usage: lastDb.tool_usage,
           tokens_in: lastDb.tokens_in,
           tokens_out: lastDb.tokens_out,
           cost_usd: lastDb.cost_usd,
@@ -309,6 +331,11 @@ export default function ChatClient() {
   }
 
   async function openCitation(citation: Citation, docId: string) {
+    if (citation.source === "web" && isSafeHttpUrl(citation.url)) {
+      window.open(citation.url!, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     const rawUrl = getDocFileUrl(docId);
     const freshToken = await getToken();
     authTokenRef.current = freshToken ?? undefined;
@@ -418,10 +445,10 @@ export default function ChatClient() {
       return `Hello! I'm DocuMind, your AI assistant for ${doc}.\n\nAsk me anything about the document and I'll search it, verify my answer, and point you to the exact pages.`;
 
     if (/who are you|what are you|tell me about yourself|introduce yourself|what is documind/.test(q))
-      return `I'm DocuMind, an agentic document intelligence system.\n\nI'm powered by a LangGraph pipeline that combines:\n- Hybrid search: pgvector + full-text, fused with Reciprocal Rank Fusion\n- Cross-encoder reranking: to surface the most relevant passages\n- Gemini 2.5 Flash: for accurate, grounded answer generation\n- Hallucination checking: every answer is verified before it reaches you\n\nCurrently loaded: ${doc}`;
+      return `I'm DocuMind, a multi-agent document intelligence system.\n\nI'm powered by a LangGraph supervisor that coordinates three agents:\n- Researcher: hybrid search (pgvector + full-text + RRF), with web search and a calculator tool it calls when needed\n- Synthesizer: writes a cited answer from the retrieved chunks and tool results\n- Critic: checks the answer for hallucination, missing citations, and off-topic drift, sending it back for revision if needed\n\nCurrently loaded: ${doc}`;
 
     if (/what can you do|how can you help|what do you do|your capabilities|what can i ask|what kind of questions|what should i ask/.test(q))
-      return `Here's what I can do with ${doc}:\n\n- Answer questions with page-level citations; click any badge to jump to the source\n- Summarise sections, chapters, or the whole document\n- Extract specific data: tables, numbers, names, dates\n- Explain complex passages in plain language\n- Compare sections or identify contradictions\n- Find any topic, term, or concept mentioned in the document\n\nJust ask naturally and I'll figure out where to look.`;
+      return `Here's what I can do with ${doc}:\n\n- Answer questions with page-level citations, click any badge to jump to the source\n- Search the web or run calculations when the document alone isn't enough (look for the Web or Calc badge)\n- Summarise sections, chapters, or the whole document\n- Extract specific data: tables, numbers, names, dates\n- Explain complex passages in plain language\n- Compare sections or identify contradictions\n- Find any topic, term, or concept mentioned in the document\n\nJust ask naturally and I'll figure out where to look.`;
 
     if (/^(help|how do i use (this|you)|how does this work|instructions|commands|getting started)/.test(q))
       return `How to use DocuMind:\n\n1. Type your question in the box below and press Send or Enter\n2. I'll search the document, rerank results, generate an answer, and verify it\n3. Click the p.N citation badges under my answer to jump to that page in the PDF\n4. Use the panel icon (top right) to open the PDF side by side\n\nTips for better answers:\n- Be specific: "What does section 4 say about pricing?"\n- Ask for summaries: "Summarise the key findings"\n- Ask follow-ups: I remember the conversation context`;
@@ -494,7 +521,7 @@ export default function ChatClient() {
       (duration_ms) => {
         if (cancelledRef.current) return;
         if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
-        // Only clear pending when still on the chat page — if the user navigated
+        // Only clear pending when still on the chat page. If the user navigated
         // away, leave it for ChatWatcher to detect and show a toast.
         if (isMountedRef.current) clearPendingChat();
         setMessages((prev) => {
@@ -542,6 +569,12 @@ export default function ChatClient() {
       () => {
         if (!cancelledRef.current)
           toast.info("Personal information detected and redacted from your message.", { duration: 5000 });
+      },
+      (toolUsage: ToolUsage) => {
+        if (cancelledRef.current) return;
+        const used = toolUsage.web_search.used || toolUsage.calculator.used;
+        if (!used) return;
+        updateLast((m) => ({ ...m, tool_usage: toolUsage }));
       }
     );
   }
@@ -719,13 +752,40 @@ export default function ChatClient() {
                               {msg.citations.map((c: Citation, i: number) => (
                                 <button
                                   key={i}
-                                  title={c.text ?? `Page ${c.page}`}
+                                  title={c.source === "web" ? (c.url ?? "") : (c.text ?? `Page ${c.page}`)}
                                   onClick={() => void openCitation(c, activeSession.doc_id)}
                                   className="text-xs bg-primary/15 hover:bg-primary/30 text-primary px-2 py-0.5 rounded-full cursor-pointer border border-primary/20 hover:border-primary/50 transition-colors active:scale-95"
                                 >
-                                  p.{c.page}
+                                  {c.source === "web" ? hostnameOf(c.url) : `p.${c.page}`}
                                 </button>
                               ))}
+                            </div>
+                          )}
+
+                          {msg.tool_usage && (msg.tool_usage.web_search.used || msg.tool_usage.calculator.used) && (
+                            <div className="flex flex-wrap gap-1.5 px-1">
+                              {msg.tool_usage.web_search.used && (
+                                <button
+                                  onClick={() => {
+                                    setWebSources(msg.tool_usage!.web_search.results);
+                                    setWebSourcesOpen(true);
+                                  }}
+                                  title="View web sources"
+                                  className="flex items-center gap-1 text-xs bg-accent/50 hover:bg-accent text-muted-foreground hover:text-foreground px-2 py-0.5 rounded-full cursor-pointer border border-border transition-colors active:scale-95"
+                                >
+                                  <GlobeIcon className="size-3" />
+                                  Web ({msg.tool_usage.web_search.count})
+                                </button>
+                              )}
+                              {msg.tool_usage.calculator.used && (
+                                <span
+                                  title={`${msg.tool_usage.calculator.expression} = ${msg.tool_usage.calculator.result}`}
+                                  className="flex items-center gap-1 text-xs bg-accent/50 text-muted-foreground px-2 py-0.5 rounded-full border border-border"
+                                >
+                                  <CalculatorIcon className="size-3" />
+                                  Calc
+                                </span>
+                              )}
                             </div>
                           )}
 
@@ -828,6 +888,39 @@ export default function ChatClient() {
                   <p className="text-xs text-muted-foreground font-mono break-all select-all">{doc.doc_id}</p>
                 </button>
               ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={webSourcesOpen} onOpenChange={setWebSourcesOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Web sources</DialogTitle>
+          </DialogHeader>
+          {webSources.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No sources recorded.</p>
+          ) : (
+            <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+              {webSources.map((r, i) =>
+                isSafeHttpUrl(r.url) ? (
+                  <a
+                    key={i}
+                    href={r.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-left px-4 py-3 rounded-lg hover:bg-accent/50 transition-colors text-sm"
+                  >
+                    <p className="font-medium truncate">{r.title || hostnameOf(r.url)}</p>
+                    <p className="text-xs text-muted-foreground truncate">{r.url}</p>
+                  </a>
+                ) : (
+                  <div key={i} className="px-4 py-3 rounded-lg text-sm opacity-60">
+                    <p className="font-medium truncate">{r.title || hostnameOf(r.url)}</p>
+                    <p className="text-xs text-muted-foreground truncate">{r.url}</p>
+                  </div>
+                )
+              )}
             </div>
           )}
         </DialogContent>

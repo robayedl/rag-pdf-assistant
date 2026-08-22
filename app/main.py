@@ -265,6 +265,12 @@ class Citation(BaseModel):
     page: int
     chunk_id: int
     source: str
+    url: Optional[str] = None
+
+
+class ToolUsageResponse(BaseModel):
+    web_search: dict = Field(default_factory=lambda: {"used": False, "count": 0, "results": []})
+    calculator: dict = Field(default_factory=lambda: {"used": False, "expression": "", "result": ""})
 
 
 class QueryResponse(BaseModel):
@@ -278,6 +284,7 @@ class QueryResponse(BaseModel):
     from_cache: bool = False
     hyde_triggered: bool = False
     pii_redacted: bool = False
+    tool_usage: Optional[ToolUsageResponse] = None
 
 
 class DocRecord(BaseModel):
@@ -727,7 +734,8 @@ async def query(
         raw = cached.get("citations", [])
         citations = [
             Citation(ref=c.get("ref", ""), page=c.get("page", -1),
-                     chunk_id=c.get("chunk_id", -1), source=c.get("source", ""))
+                     chunk_id=c.get("chunk_id", -1), source=c.get("source", ""),
+                     url=c.get("url"))
             for c in raw
         ]
         return QueryResponse(
@@ -740,6 +748,7 @@ async def query(
     state, usage = run_agent(question=safe_question, doc_id=req.doc_id, session_id=req.session_id or "")
     answer = restore(state.get("generation", ""), pii_map)
     docs: List[Document] = state.get("documents", [])
+    cited_docs: List[Document] = state.get("cited_documents", [])
 
     if not answer and not docs:
         raise HTTPException(status_code=404, detail="Document not indexed.")
@@ -749,11 +758,13 @@ async def query(
         if _is_no_answer(answer)
         else [
             Citation(ref=d.metadata.get("ref", ""), page=d.metadata.get("page", -1),
-                     chunk_id=d.metadata.get("chunk_id", -1), source=d.metadata.get("source", ""))
-            for d in docs
+                     chunk_id=d.metadata.get("chunk_id", -1), source=d.metadata.get("source", ""),
+                     url=d.metadata.get("url"))
+            for d in cited_docs
         ]
     )
     latency_ms = (time.perf_counter() - t0) * 1000.0
+    tool_usage = state.get("tool_usage", {})
 
     cost = (
         compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
@@ -763,13 +774,14 @@ async def query(
     if not _is_no_answer(answer):
         semantic_cache.store(req.question, req.doc_id, answer, [c.model_dump() for c in citations])
     await _persist_usage(db, user.user_id, req.doc_id, req.session_id, req.question, answer,
-                         [c.model_dump() for c in citations], usage.tokens_in, usage.tokens_out, cost)
+                         [c.model_dump() for c in citations], usage.tokens_in, usage.tokens_out, cost,
+                         tool_usage)
 
     return QueryResponse(
         doc_id=req.doc_id, question=req.question, answer=answer,
         citations=citations, retrieved=len(docs), retries=state.get("retry_count", 0),
         latency_ms=round(latency_ms, 2), hyde_triggered=state.get("hyde_triggered", False),
-        pii_redacted=bool(pii_map),
+        pii_redacted=bool(pii_map), tool_usage=tool_usage,
     )
 
 
@@ -842,6 +854,7 @@ async def query_stream(
             state, usage = await future
             answer = restore(state.get("generation", ""), pii_map)
             docs: List[Document] = state.get("documents", [])
+            cited_docs: List[Document] = state.get("cited_documents", [])
 
             if not answer and not docs:
                 await sse_queue.put(_sse("error", "Document not indexed."))
@@ -859,11 +872,13 @@ async def query_stream(
                         "page": d.metadata.get("page", -1),
                         "chunk_id": d.metadata.get("chunk_id", -1),
                         "source": d.metadata.get("source", ""),
+                        "url": d.metadata.get("url"),
                         "text": d.page_content[:200],
                     }
-                    for d in docs
+                    for d in cited_docs
                 ]
             )
+            tool_usage = state.get("tool_usage", {})
 
             cost = (
                 compute_cost("gemini-2.5-flash", usage.tokens_in, usage.tokens_out)
@@ -876,7 +891,7 @@ async def query_stream(
             async with async_session_factory() as sess:
                 await _persist_usage(
                     sess, user.user_id, req.doc_id, req.session_id, req.question, answer,
-                    citations_data, usage.tokens_in, usage.tokens_out, cost,
+                    citations_data, usage.tokens_in, usage.tokens_out, cost, tool_usage,
                 )
 
             for i, word in enumerate(answer.split(" ")):
@@ -893,6 +908,7 @@ async def query_stream(
                 "tokens_out": usage.tokens_out,
                 "cost_usd": round(cost, 6),
             })))
+            await sse_queue.put(_sse("tool_usage", json.dumps(tool_usage)))
             await sse_queue.put(_sse("done", ""))
 
         except Exception as e:
@@ -1045,6 +1061,7 @@ class ConversationMessageResponse(BaseModel):
     role: str
     content: str
     citations: list = []
+    tool_usage: Optional[dict] = None
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
@@ -1082,6 +1099,7 @@ async def get_conversation_messages(
             role=m.role,
             content=m.content,
             citations=m.citations.get("items", []) if m.citations else [],
+            tool_usage=m.citations.get("tool_usage") if m.citations else None,
             tokens_in=m.tokens_in or 0,
             tokens_out=m.tokens_out or 0,
             cost_usd=m.cost_usd or 0.0,
@@ -1103,6 +1121,7 @@ async def _persist_usage(
     tokens_in: int,
     tokens_out: int,
     cost_usd: float,
+    tool_usage: dict | None = None,
 ) -> None:
     """Store or update a conversation + user/assistant message pair with usage info."""
     try:
@@ -1114,7 +1133,7 @@ async def _persist_usage(
                 conv_id = None
 
         if conv_id is not None:
-            # Verify the conversation actually exists; create it if the session is new
+            # Verify the conversation actually exists, create it if the session is new
             existing = await db.get(Conversation, conv_id)
             if existing is None:
                 conv = Conversation(
@@ -1138,11 +1157,15 @@ async def _persist_usage(
             role="user",
             content=question,
         )
+        assistant_citations: dict = {"items": citations}
+        if tool_usage:
+            assistant_citations["tool_usage"] = tool_usage
+
         assistant_msg = Message(
             conversation_id=conv_id,
             role="assistant",
             content=answer,
-            citations={"items": citations},
+            citations=assistant_citations,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             cost_usd=cost_usd,
@@ -1243,7 +1266,7 @@ async def revoke_api_key(
 
 
 # ---------------------------------------------------------------------------
-# MCP HTTP/SSE transport  — mounted at /mcp for Cursor and other HTTP clients
+# MCP HTTP/SSE transport, mounted at /mcp for Cursor and other HTTP clients
 # ---------------------------------------------------------------------------
 
 try:
@@ -1314,4 +1337,4 @@ try:
     logger.info("MCP HTTP/SSE transport mounted at /mcp")
 
 except ImportError:
-    logger.warning("mcp package not installed — HTTP/SSE transport disabled")
+    logger.warning("mcp package not installed, HTTP/SSE transport disabled")

@@ -1,3 +1,4 @@
+"""Superseded by the critic agent in rag/agents/. Kept for reference."""
 from __future__ import annotations
 
 import logging

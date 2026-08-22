@@ -238,6 +238,29 @@ describe("chat SSE stream", () => {
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
+  it("parses the tool_usage event and calls onToolUsage", async () => {
+    const toolUsage = {
+      web_search: { used: true, count: 2, results: [{ title: "A", url: "https://a.com", snippet: "s" }] },
+      calculator: { used: false, expression: "", result: "" },
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      body: makeBody([
+        `event: tool_usage\ndata: ${JSON.stringify(toolUsage)}\n\n`,
+        "event: done\ndata: {}\n\n",
+      ]),
+    });
+    const onToolUsage = jest.fn();
+    chat(
+      { doc_id: "d", question: "q" }, undefined,
+      () => {}, () => {}, () => {}, () => {}, () => {},
+      undefined, undefined, undefined, undefined,
+      onToolUsage
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onToolUsage).toHaveBeenCalledWith(toolUsage);
+  });
+
   it("fires onDone fallback when done event lacks trailing \\n\\n", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true, status: 200,

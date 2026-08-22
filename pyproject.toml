@@ -1,7 +1,7 @@
 [project]
 name = "documind"
-version = "2.3.0"
-description = "DocuMind — Agentic Document Intelligence powered by LangGraph, Gemini 2.5 Flash, hybrid search, Clerk auth, and pgvector"
+version = "3.0.0"
+description = "DocuMind: Agentic Document Intelligence powered by LangGraph, Gemini 2.5 Flash, hybrid search, Clerk auth, and pgvector"
 authors = [
     {name = "Robayed Ashraf"}
 ]

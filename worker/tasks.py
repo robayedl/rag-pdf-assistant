@@ -23,7 +23,7 @@ from rag.ingest import (                              # noqa: F401
     index_docx_document as _index_docx_document,
 )
 
-# Pre-load ML models before forking; children inherit via copy-on-write (1x RAM, not Nx).
+# Pre-load ML models before forking. Children inherit via copy-on-write (1x RAM, not Nx).
 try:
     from rag.llm import get_embeddings, get_llm
     from rag.chains.rerank import _get_cross_encoder

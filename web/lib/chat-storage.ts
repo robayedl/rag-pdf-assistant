@@ -1,10 +1,11 @@
-import type { Citation } from "./api";
+import type { Citation, ToolUsage } from "./api";
 
 export interface StoredMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  tool_usage?: ToolUsage | null;
   duration_ms?: number;
   interrupted?: boolean;
   tokens_in?: number;

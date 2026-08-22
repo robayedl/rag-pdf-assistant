@@ -16,7 +16,7 @@ export default function DocWatcher() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    // DocsPage handles its own toasts; skip on that route
+    // DocsPage handles its own toasts, skip on that route
     if (!isLoaded || !isSignedIn || pathname.startsWith("/docs")) {
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -50,7 +50,7 @@ export default function DocWatcher() {
           pollRef.current = null;
         }
       } catch {
-        // network errors are silent; watcher is best-effort
+        // network errors are silent, watcher is best-effort
       }
     }
 

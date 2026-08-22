@@ -4,7 +4,7 @@ This directory contains the golden dataset and RAGAS evaluation scripts for meas
 
 ---
 
-## Golden Dataset — `golden.jsonl`
+## Golden Dataset: `golden.jsonl`
 
 Each line is a JSON object with the following fields:
 
@@ -23,7 +23,7 @@ Each line is a JSON object with the following fields:
 | `factual` | Direct lookup of a specific fact stated in the document | 15 |
 | `reasoning` | Requires understanding cause-and-effect or the "why" behind a design choice | 8 |
 | `multi_hop` | Answer requires connecting information from two or more parts of the document | 5 |
-| `out_of_scope` | Question is unrelated to the document; the system should refuse gracefully | 2 |
+| `out_of_scope` | Question is unrelated to the document, the system should refuse gracefully | 2 |
 
 The current dataset is built from **"Attention Is All You Need"** (Vaswani et al., 2017).
 
@@ -32,24 +32,27 @@ The current dataset is built from **"Attention Is All You Need"** (Vaswani et al
 ## Adding new entries
 
 1. Open `eval/golden.jsonl` in any text editor.
-2. Append one JSON object per line (no trailing commas; each line is independent).
+2. Append one JSON object per line (no trailing commas, each line is independent).
 3. Use an existing entry as a template:
 
 ```jsonl
 {"question": "...", "expected_answer": "...", "source_doc": "...", "source_page": N, "category": "factual"}
 ```
 
-4. Keep `expected_answer` concise and factually accurate — it is used as the RAGAS `reference` string.
+4. Keep `expected_answer` concise and factually accurate. It is used as the RAGAS `reference` string.
 5. For out-of-scope questions set `source_page` to `-1`.
 
 ---
 
-## Running the evaluation — `run.py`
+## Running the evaluation: `run.py`
 
 ### Prerequisites
 
-1. The PDF must be uploaded and indexed via the API. Note the `doc_id` returned by `POST /documents/{doc_id}/index`. The server does **not** need to be running during evaluation — `run.py` calls the pipeline directly.
+1. The PDF must be uploaded and indexed via the API. Note the `doc_id` returned by `POST /documents/{doc_id}/index`. The server does **not** need to be running during evaluation, `run.py` calls the pipeline directly.
 2. `GOOGLE_API_KEY` must be set in your environment (used as the RAGAS judge LLM).
+3. `run.py` calls the pipeline with `use_tools=False`, so the Researcher's web search / calculator
+   step is skipped entirely, so scores measure document-grounded retrieval + synthesis only, and runs
+   stay reproducible instead of depending on live web search results.
 
 ### Usage
 
@@ -98,7 +101,8 @@ python eval/run.py --update-readme
 | 30 questions (full) | ~10–15 min | ~$0.05–$0.15 |
 
 Cost depends on answer and context length. Each question triggers:
-- 1 DocuMind pipeline call (Gemini generation + grading)
+- 1 DocuMind pipeline call through the Researcher → Synthesizer → Critic supervisor (tools disabled,
+  one Synthesizer + one Critic call per revision, up to 2 revisions)
 - 4–8 Gemini calls for RAGAS metrics (faithfulness, answer relevancy, context precision, context recall)
 
 ---

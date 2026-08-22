@@ -16,7 +16,7 @@ from rag.llm import get_embeddings
 
 logger = logging.getLogger(__name__)
 
-# v2: added doc_id TagField; bump name so existing index is replaced on next start
+# v2: added doc_id TagField, bump name so existing index is replaced on next start
 _INDEX_NAME = "semantic_cache_v2_idx"
 _KEY_PREFIX = "cache:"
 _VECTOR_DIM = 768
@@ -77,7 +77,7 @@ def lookup(query: str, doc_id: str) -> Optional[dict]:
         if not results.docs:
             return None
         top = results.docs[0]
-        # RediSearch COSINE returns distance (0 = identical); convert to similarity
+        # RediSearch COSINE returns distance (0 = identical), convert to similarity
         similarity = 1.0 - float(top.score)
         if similarity >= threshold:
             answer = top.answer

@@ -72,8 +72,13 @@ def _load_golden(path: Path, category: str | None, limit: int | None) -> list[di
 
 
 def _run_pipeline(question: str, doc_id: str) -> tuple[str, list[str]]:
-    """Invoke the DocuMind agent and return (answer, retrieved_context_strings)."""
-    state = run_agent(question=question, doc_id=doc_id, top_k=8)
+    """Invoke the DocuMind agent and return (answer, retrieved_context_strings).
+
+    use_tools=False so scores measure document-grounded retrieval + synthesis only.
+    Web search / calculator results would otherwise leak non-document context into
+    RAGAS's context_precision / context_recall and make runs non-reproducible.
+    """
+    state, _usage = run_agent(question=question, doc_id=doc_id, top_k=8, use_tools=False)
     answer: str = state.get("generation", "")
     docs = state.get("documents", [])
     contexts = [doc.page_content for doc in docs] if docs else ["No context retrieved."]
@@ -83,7 +88,7 @@ def _run_pipeline(question: str, doc_id: str) -> tuple[str, list[str]]:
 def _build_ragas_judge() -> tuple[LangchainLLMWrapper, LangchainEmbeddingsWrapper]:
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not set — required for RAGAS judge.")
+        raise RuntimeError("GOOGLE_API_KEY is not set, required for RAGAS judge.")
 
     llm = LangchainLLMWrapper(
         ChatGoogleGenerativeAI(
@@ -239,7 +244,7 @@ def update_readme_from_results(
 ) -> bool:
     """
     Write scores from a result JSON into the <!-- EVAL-RESULTS-START/END --> block
-    in README.md.  Pass result_file to use a specific file; otherwise the latest
+    in README.md.  Pass result_file to use a specific file, otherwise the latest
     file in results_dir is used.
     Returns True if the README was updated, False otherwise.
     """
@@ -371,20 +376,18 @@ def main() -> None:
     per_metric, means = _compute_ragas(ragas_samples, llm, emb)
 
     # ── Step 2b: fix out-of-scope scores ──────────────────────────
-    # AnswerRelevancy is undefined for "I do not know" responses — RAGAS
-    # gives 0 even when the refusal is correct. Override to 1.0 for any
-    # out_of_scope question whose answer is a proper refusal.
+    # Faithfulness and answer_relevancy are undefined for "I do not know"
+    # responses. There's no claim to fact-check and no context to be relevant
+    # to, so RAGAS gives 0 even when the refusal is the correct answer.
+    # Override all four metrics to 1.0 for any out_of_scope question whose
+    # answer is a proper refusal.
     _NO_ANSWER = ("i do not know", "i don't know", "i cannot", "not mentioned")
     for i, entry in enumerate(entries):
         if entry.get("category") == "out_of_scope":
             ans_lower = all_answers[i].strip().lower()
             is_refusal = any(ans_lower.startswith(p) for p in _NO_ANSWER)
             if is_refusal:
-                if "answer_relevancy" in per_metric:
-                    per_metric["answer_relevancy"][i] = 1.0
-                # Context precision/recall are not applicable for out-of-scope
-                # questions — the model correctly assessed nothing was relevant.
-                for m in ("context_precision", "context_recall"):
+                for m in ("faithfulness", "answer_relevancy", "context_precision", "context_recall"):
                     if m in per_metric:
                         per_metric[m][i] = 1.0
 

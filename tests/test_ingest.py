@@ -1,4 +1,4 @@
-"""Unit tests for rag/ingest.py — table extraction, figure captioning, OCR fallback."""
+"""Unit tests for rag/ingest.py: table extraction, figure captioning, OCR fallback."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -67,7 +67,7 @@ def test_html_to_markdown_fallback_on_import_error(monkeypatch):
     assert "<" not in result
 
 
-# _build_docs_from_elements — table handling
+# _build_docs_from_elements: table handling
 
 def test_table_becomes_single_markdown_chunk():
     from rag.ingest import _build_docs_from_elements
@@ -91,7 +91,7 @@ def test_table_with_no_html_falls_back_to_text():
     assert "col1" in docs[0].page_content
 
 
-# _build_docs_from_elements — narrative/title chunking
+# _build_docs_from_elements: narrative/title chunking
 
 def test_narrative_is_chunked():
     from rag.ingest import _build_docs_from_elements
@@ -112,7 +112,7 @@ def test_title_element_produces_chunk():
     assert docs[0].metadata["element_type"] == "text"
 
 
-# _build_docs_from_elements — figure captioning
+# _build_docs_from_elements: figure captioning
 
 def test_figure_creates_chunk_with_caption(tmp_path, monkeypatch):
     from rag.ingest import _build_docs_from_elements

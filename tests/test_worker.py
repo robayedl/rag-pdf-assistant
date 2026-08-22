@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
-import worker.tasks  # noqa: F401 — ensures module is in sys.modules before patching
+import worker.tasks  # noqa: F401, ensures module is in sys.modules before patching
 from worker.tasks import ingest_document
 
 

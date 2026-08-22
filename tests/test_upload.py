@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-import worker.tasks  # noqa: F401  — pre-load so patch("worker.tasks.ingest_document") works
+import worker.tasks  # noqa: F401, pre-load so patch("worker.tasks.ingest_document") works
 
 FAKE_PDF = b"%PDF-1.4\n%fake\n1 0 obj\n<<>>\nendobj\n%%EOF"
 

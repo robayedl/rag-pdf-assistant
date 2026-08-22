@@ -1,4 +1,4 @@
-"""Unit tests for DOCX ingestion — rag/ingest.py DOCX paths."""
+"""Unit tests for DOCX ingestion: rag/ingest.py DOCX paths."""
 from __future__ import annotations
 
 from pathlib import Path

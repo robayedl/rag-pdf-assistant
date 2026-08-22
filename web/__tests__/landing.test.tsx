@@ -23,10 +23,11 @@ describe("Landing page", () => {
 
   it("renders all feature cards", () => {
     render(<LandingPage />);
-    expect(screen.getByText("Agentic RAG")).toBeInTheDocument();
+    expect(screen.getByText("Multi-Agent Supervisor")).toBeInTheDocument();
+    expect(screen.getByText("Researcher Tools")).toBeInTheDocument();
     expect(screen.getByText("Hybrid Search")).toBeInTheDocument();
+    expect(screen.getByText("RAGAS Evaluation")).toBeInTheDocument();
     expect(screen.getByText("Semantic Cache")).toBeInTheDocument();
-    expect(screen.getByText("Streaming + Recovery")).toBeInTheDocument();
     expect(screen.getByText("MCP Server")).toBeInTheDocument();
   });
 });

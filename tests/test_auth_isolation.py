@@ -17,7 +17,7 @@ _OTHER_USER = ClerkUser(user_id="other_user", email="other@test.com")
 
 
 # ---------------------------------------------------------------------------
-# Auth enforcement — all protected endpoints must reject unauthenticated calls
+# Auth enforcement: all protected endpoints must reject unauthenticated calls
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("method,path,kwargs", [
@@ -37,7 +37,7 @@ def test_endpoint_requires_auth(method, path, kwargs):
 
 
 # ---------------------------------------------------------------------------
-# User isolation — a user cannot access another user's document
+# User isolation: a user cannot access another user's document
 # ---------------------------------------------------------------------------
 
 def _session_for_user(owner_user_id: str) -> AsyncMock:
@@ -61,7 +61,7 @@ def _session_for_user(owner_user_id: str) -> AsyncMock:
 
 
 def test_list_docs_returns_only_own_documents():
-    """GET /documents must filter by user_id — another user gets an empty list."""
+    """GET /documents must filter by user_id: another user gets an empty list."""
     session, _ = _session_for_user("user_a")
 
     # Simulate user_b's session returning no rows (they own nothing)
@@ -96,7 +96,7 @@ def test_get_doc_file_returns_404_for_wrong_user(tmp_path):
     pdf_dir.mkdir(parents=True)
     (pdf_dir / f"{doc_id}.pdf").write_bytes(b"%PDF-1.4 placeholder")
 
-    # DB returns None — doc belongs to a different user
+    # DB returns None: doc belongs to a different user
     session = AsyncMock()
     session.add = MagicMock()
     result = MagicMock()
