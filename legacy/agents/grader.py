@@ -1,3 +1,4 @@
+"""Superseded by the researcher/critic agents in rag/agents/. Kept for reference."""
 from __future__ import annotations
 
 import json
@@ -25,7 +26,7 @@ _GRADER_PROMPT = ChatPromptTemplate.from_messages(
             "- Contains evidence, definitions, or values the question refers to, OR\n"
             "- Provides context that helps reason toward the answer.\n"
             "Only mark 'no' if the chunk is entirely unrelated to the question's topic.\n"
-            "When in doubt, mark 'yes'; it is better to keep a loosely relevant chunk than to discard it.\n"
+            "When in doubt, mark 'yes', it is better to keep a loosely relevant chunk than to discard it.\n"
             "Example output for 3 chunks: [\"yes\", \"no\", \"yes\"]\n"
             "Return only the JSON array, nothing else.",
         ),

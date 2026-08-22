@@ -4,20 +4,20 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   GitBranch, Search, Zap, Lightbulb,
-  Radio, BookOpen, Brain, Plug,
+  Brain, Plug, Wrench, FlaskConical,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import Nav from "@/components/nav";
 
 const features = [
-  { icon: GitBranch, title: "Agentic RAG",          desc: "LangGraph agent grades retrieved chunks, rewrites low-quality queries, and checks every answer for hallucinations before delivery." },
-  { icon: Search,    title: "Hybrid Search",         desc: "Fuses dense pgvector HNSW cosine search with sparse PostgreSQL BM25 via Reciprocal Rank Fusion, then re-scores with a cross-encoder reranker." },
-  { icon: Brain,     title: "Contextual Retrieval",  desc: "Gemini prepends a document-aware context sentence to every chunk before embedding — an Anthropic-validated technique that dramatically lifts retrieval precision." },
-  { icon: Lightbulb, title: "HyDE Fallback",         desc: "When the reranker score falls below threshold, generates a hypothetical answer passage and re-retrieves using its embedding to rescue ambiguous queries." },
-  { icon: Plug,      title: "MCP Server",            desc: "Exposes search, list, and get tools via Model Context Protocol so Claude Desktop and Cursor can query your document library as native AI tools." },
-  { icon: Zap,       title: "Semantic Cache",        desc: "Redis vector cache returns near-identical answers in milliseconds without re-running the retrieval or generation pipeline." },
-  { icon: Radio,     title: "Streaming + Recovery",  desc: "Token-by-token SSE output with answers and costs persisted to Postgres mid-stream — nothing is lost even on client disconnect." },
-  { icon: BookOpen,  title: "Citations",             desc: "Every answer is grounded with page-level source references; click any badge to jump directly to the passage in the inline PDF viewer." },
+  { icon: GitBranch,    title: "Multi-Agent Supervisor", desc: "A LangGraph supervisor orchestrates Researcher, Synthesizer, and Critic agents. The Critic checks hallucination, missing citations, and off-topic drift, sending the draft back for up to 2 revisions." },
+  { icon: Wrench,       title: "Researcher Tools",       desc: "The Researcher agent calls Tavily web search and a safe calculator via Gemini function calling. The model decides on its own when a tool is actually needed." },
+  { icon: FlaskConical, title: "RAGAS Evaluation",       desc: "Faithfulness, answer relevancy, context precision, and recall measured against a 30-question golden dataset on every pipeline change." },
+  { icon: Brain,        title: "Contextual Retrieval",   desc: "Gemini prepends a document-aware context sentence to every chunk before embedding, an Anthropic-validated technique that dramatically lifts retrieval precision." },
+  { icon: Search,       title: "Hybrid Search",          desc: "Fuses dense pgvector HNSW cosine search with sparse PostgreSQL BM25 via Reciprocal Rank Fusion, then re-scores with a cross-encoder reranker." },
+  { icon: Lightbulb,    title: "HyDE Fallback",          desc: "When the reranker score falls below threshold, generates a hypothetical answer passage and re-retrieves using its embedding to rescue ambiguous queries." },
+  { icon: Plug,         title: "MCP Server",             desc: "Exposes search, list, and get tools via Model Context Protocol so Claude Desktop and Cursor can query your document library as native AI tools." },
+  { icon: Zap,          title: "Semantic Cache",         desc: "Redis vector cache returns near-identical answers in milliseconds without re-running the retrieval or generation pipeline." },
 ];
 
 const container = {

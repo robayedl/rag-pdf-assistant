@@ -45,7 +45,7 @@ const PdfPane = dynamic(() => import("@/components/PdfPane"), { ssr: false });
 // Statuses that mean a background job is running or queued
 const ACTIVE_STATUSES = new Set(["pending", "processing"]);
 
-// Steps shown during ingestion — weights sum to 100 %
+// Steps shown during ingestion, weights sum to 100 %
 const PDF_STEPS = [
   { label: "Queued",     doneLabel: "Queued",     threshold: 0  },
   { label: "Parsing",    doneLabel: "Parsed",     threshold: 5  },
@@ -180,7 +180,7 @@ function StatusProgress({ status, value, sourceType }: { status: string; value: 
   const isUploading = status === "uploading";
   return (
     <div className="flex flex-col gap-1.5">
-      {/* Top row: status icon + label + percentage — all on one line */}
+      {/* Top row: status icon + label + percentage, all on one line */}
       <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
         <Loader2Icon className="size-3 animate-spin text-blue-400 shrink-0" />
         <span className="text-blue-400 text-xs ml-1">
@@ -538,7 +538,7 @@ export default function DocsPage() {
                           <dt className="text-muted-foreground font-medium">Doc ID</dt>
                           <dd>
                             {doc.doc_id === "__uploading__" ? (
-                              <span className="text-muted-foreground font-mono">—</span>
+                              <span className="text-muted-foreground font-mono">-</span>
                             ) : (
                               <button
                                 className="group inline-flex items-center gap-1 text-muted-foreground font-mono break-all text-left hover:text-foreground transition-colors cursor-pointer"
@@ -582,7 +582,7 @@ export default function DocsPage() {
                           )}
                         </dl>
 
-                        {/* Status — one line with bar+% when processing/uploading */}
+                        {/* Status: one line with bar+% when processing/uploading */}
                         {(doc.status === "processing" || isUploading) ? (
                           <StatusProgress
                             status={doc.status}
@@ -593,7 +593,7 @@ export default function DocsPage() {
                           <StatusBadge status={doc.status} />
                         )}
 
-                        {/* Step breakdown — active or stopped/failed */}
+                        {/* Step breakdown: active or stopped/failed */}
                         {(doc.status === "processing" || doc.status === "stopped" || doc.status === "failed") && (
                           <StepsBreakdown progress={doc.progress_percent} status={doc.status} sourceType={doc.source_type} />
                         )}

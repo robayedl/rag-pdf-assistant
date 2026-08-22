@@ -99,7 +99,7 @@ def render_sidebar() -> None:
     st.sidebar.markdown(
         "<div style='font-size:0.78rem; color:#8892a4; line-height:1.7'>"
         "Upload any PDF and ask questions in plain English.<br>"
-        "Answers are grounded in your document only — no guessing.<br><br>"
+        "Answers are grounded in your document only, no guessing.<br><br>"
         "<b>Powered by</b><br>"
         "Gemini 2.5 Flash &nbsp;·&nbsp; LangGraph<br>"
         "Hybrid Search &nbsp;·&nbsp; Cross-Encoder Reranking<br><br>"

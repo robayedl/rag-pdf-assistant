@@ -7,7 +7,7 @@ const steps = [
     icon: LogInIcon,
     title: "Sign in",
     desc: "Click Sign in from the nav bar or visit /login. Create an account or sign in with an existing one.",
-    detail: "DocuMind uses Clerk for authentication. Your documents, chats, and usage data are private; no other user can see them.",
+    detail: "DocuMind uses Clerk for authentication. Your documents, chats, and usage data are private, and no other user can see them.",
   },
   {
     number: "02",
@@ -21,21 +21,21 @@ const steps = [
     icon: DatabaseIcon,
     title: "Wait for indexing",
     desc: "After upload the document is queued for background processing. The card shows a smooth progress bar and a step breakdown: Queued → Parsing → Extracting → Embedding → Finalizing.",
-    detail: "Indexing takes 1-3 minutes depending on file size. You can leave the page and come back; the card polls every 2 seconds. Use Stop to cancel at any time; the card remembers which step it was on. Use Reindex to retry a failed or stopped document. Chat activates once indexing completes.",
+    detail: "Indexing takes 1-3 minutes depending on file size. You can leave the page and come back, the card polls every 2 seconds. Use Stop to cancel at any time, the card remembers which step it was on. Use Reindex to retry a failed or stopped document. Chat activates once indexing completes.",
   },
   {
     number: "04",
     icon: MessageSquareIcon,
     title: "Start chatting",
     desc: "Click Chat on any indexed document. Every answer streams back in real time with page-level citations you can click to jump to the exact passage.",
-    detail: "Conversation history is saved per session and per account. Each message shows the AUD cost and token count. If PII redaction is enabled, a notice appears when personal information is detected in your message and stripped before it reaches the model.",
+    detail: "Behind the scenes, a Researcher agent retrieves chunks (and optionally calls web search or a calculator), a Synthesizer writes the answer, and a Critic reviews it for hallucination and missing citations before it reaches you, revising up to twice if needed. Conversation history is saved per session and per account. Each message shows the AUD cost and token count. If PII redaction is enabled, a notice appears when personal information is detected in your message and stripped before it reaches the model.",
   },
   {
     number: "05",
     icon: LightbulbIcon,
-    title: "Read citations",
+    title: "Read citations & tool badges",
     desc: "Every answer includes page badges beneath the response. Click a badge to open the PDF at the exact source passage.",
-    detail: "If the model cannot find relevant context, it says so rather than hallucinating.",
+    detail: "If the Researcher used web search or the calculator, a Web (N) or Calc badge appears next to the citations. Click Web to see the source URLs, or hover Calc to see the expression and result. If the model cannot find relevant context, it says so rather than hallucinating.",
   },
   {
     number: "06",
@@ -54,12 +54,13 @@ const steps = [
 ];
 
 const tips = [
-  "Ask specific questions; the retrieval pipeline works best with focused queries.",
-  "Rephrase if the first answer is weak; the rewrite node will try a different query.",
+  "Ask specific questions, the retrieval pipeline works best with focused queries.",
+  "If the Critic isn't satisfied with a draft answer, it's automatically revised (up to twice) before you see it.",
+  "Ask something needing current events or a calculation and watch for the Web or Calc badge. The model decides on its own whether to use those tools.",
   "Repeated or near-identical questions hit the semantic cache and return instantly.",
-  "Both PDF and DOCX files use the same inline viewer — click any page citation badge to jump directly to the source passage.",
-  "Your documents are private; only you can see and chat with files you've uploaded.",
-  "Session memory persists across logins — your chat history is saved to your account.",
+  "Both PDF and DOCX files use the same inline viewer. Click any page citation badge to jump directly to the source passage.",
+  "Your documents are private, only you can see and chat with files you've uploaded.",
+  "Session memory persists across logins, your chat history is saved to your account.",
   "Rate limits are 30 requests per hour and 200 per day. A countdown toast appears when you hit the limit.",
 ];
 

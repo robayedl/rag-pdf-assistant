@@ -16,7 +16,7 @@ export default function ChatWatcher() {
   const router = useRouter();
 
   useEffect(() => {
-    // If user is on /chat they see results directly; no toast needed
+    // If user is on /chat they see results directly, no toast needed
     if (!isLoaded || !isSignedIn || pathname.startsWith("/chat")) {
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -59,7 +59,7 @@ export default function ChatWatcher() {
           });
         }
       } catch {
-        // network errors are silent; watcher is best-effort
+        // network errors are silent, watcher is best-effort
       }
     }
 

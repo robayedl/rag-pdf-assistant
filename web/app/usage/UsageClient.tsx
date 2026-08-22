@@ -267,7 +267,7 @@ export default function UsageClient() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        Gemini 2.5 Flash — A$0.24 / 1M input tokens · A$0.94 / 1M output tokens.
+        Gemini 2.5 Flash: A$0.24 / 1M input tokens · A$0.94 / 1M output tokens.
       </p>
     </div>
   );

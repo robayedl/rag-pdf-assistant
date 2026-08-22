@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 
 
@@ -11,166 +12,540 @@ def _make_state(**kwargs):
     base = {
         "question": "test question",
         "generation": "",
+        "raw_generation": "",
         "documents": [],
         "doc_id": "test_doc",
         "retry_count": 0,
         "grounded": False,
+        "critic_feedback": "",
         "error": "",
         "session_id": "",
+        "hyde_triggered": False,
+        "top_k": 6,
+        "use_tools": True,
+        "cited_documents": [],
+        "tool_usage": {
+            "web_search": {"used": False, "count": 0, "results": []},
+            "calculator": {"used": False, "expression": "", "result": ""},
+        },
     }
     base.update(kwargs)
     return base
 
 
-def _fake_doc(content="Some relevant content."):
-    return Document(
-        page_content=content,
-        metadata={"doc_id": "test_doc", "ref": "ref1", "page": 1, "chunk_id": 0, "source": "test.pdf"},
+def _fake_doc(content="Some relevant content.", **metadata):
+    meta = {"doc_id": "test_doc", "ref": "ref1", "page": 1, "chunk_id": 0, "source": "test.pdf"}
+    meta.update(metadata)
+    return Document(page_content=content, metadata=meta)
+
+
+# ─────────────────────────────────────────────
+# Researcher
+# ─────────────────────────────────────────────
+
+def test_researcher_returns_chunks_with_no_tool_use():
+    from rag.agents.researcher import researcher_node
+
+    docs = [_fake_doc("relevant content")]
+    with patch("rag.agents.researcher.retrieve_with_hyde", return_value=(docs, False)), \
+         patch("rag.agents.researcher._augment_with_tools", return_value=(docs, {
+             "web_search": {"used": False, "count": 0, "results": []},
+             "calculator": {"used": False, "expression": "", "result": ""},
+         })):
+        result = researcher_node(_make_state())
+
+    assert result["documents"] == docs
+    assert result["error"] == ""
+    assert result["tool_usage"]["web_search"]["used"] is False
+
+
+def test_researcher_sets_error_when_nothing_found():
+    from rag.agents.researcher import researcher_node
+
+    with patch("rag.agents.researcher.retrieve_with_hyde", return_value=([], False)), \
+         patch("rag.agents.researcher._augment_with_tools", return_value=([], {
+             "web_search": {"used": False, "count": 0, "results": []},
+             "calculator": {"used": False, "expression": "", "result": ""},
+         })):
+        result = researcher_node(_make_state())
+
+    assert result["documents"] == []
+    assert "have been indexed" in result["error"]
+
+
+def test_researcher_skips_tools_when_use_tools_false():
+    from rag.agents.researcher import researcher_node
+
+    docs = [_fake_doc("relevant content")]
+    with patch("rag.agents.researcher.retrieve_with_hyde", return_value=(docs, False)), \
+         patch("rag.agents.researcher._augment_with_tools") as mock_augment:
+        result = researcher_node(_make_state(use_tools=False))
+
+    mock_augment.assert_not_called()
+    assert result["documents"] == docs
+    assert result["tool_usage"]["web_search"]["used"] is False
+    assert result["tool_usage"]["calculator"]["used"] is False
+
+
+def test_researcher_recovers_from_retrieval_exception():
+    from rag.agents.researcher import researcher_node
+
+    with patch("rag.agents.researcher.retrieve_with_hyde", side_effect=RuntimeError("db down")), \
+         patch("rag.agents.researcher._augment_with_tools", return_value=([], {
+             "web_search": {"used": False, "count": 0, "results": []},
+             "calculator": {"used": False, "expression": "", "result": ""},
+         })):
+        result = researcher_node(_make_state())
+
+    assert result["documents"] == []
+    assert result["error"]
+
+
+def test_researcher_node_reports_on_step_progress():
+    from rag.agents.researcher import researcher_node
+
+    docs = [_fake_doc("relevant content")]
+    steps: list[str] = []
+    config = {"configurable": {"on_step": steps.append}}
+
+    with patch("rag.agents.researcher.retrieve_with_hyde", return_value=(docs, True)), \
+         patch("rag.agents.researcher._augment_with_tools", return_value=(docs, {
+             "web_search": {"used": False, "count": 0, "results": []},
+             "calculator": {"used": False, "expression": "", "result": ""},
+         })):
+        researcher_node(_make_state(), config)
+
+    assert steps == ["Searching the document…", "Refining search…"]
+
+
+def test_tool_agent_node_reports_tool_step():
+    from langchain_core.messages import HumanMessage
+    from rag.agents import researcher as researcher_mod
+
+    fake_bound_llm = MagicMock()
+    fake_bound_llm.invoke.return_value = AIMessage(
+        content="", tool_calls=[{"name": "calculator", "args": {"expression": "1+1"}, "id": "call1"}]
     )
+    fake_llm = MagicMock()
+    fake_llm.bind_tools.return_value = fake_bound_llm
+
+    steps: list[str] = []
+    config = {"configurable": {"on_step": steps.append}}
+
+    researcher_mod._build_tool_subgraph.cache_clear()
+    with patch.object(researcher_mod, "get_llm", return_value=fake_llm):
+        graph = researcher_mod._build_tool_subgraph()
+        graph.invoke({"messages": [HumanMessage(content="what is 1+1")], "rounds": 0}, config=config)
+    researcher_mod._build_tool_subgraph.cache_clear()
+
+    assert "Calculating…" in steps
 
 
-# Grader tests
+def test_augment_with_tools_merges_web_results():
+    from rag.agents import researcher as researcher_mod
 
-def test_grader_filters_irrelevant_docs():
-    from rag.agents.grader import grade_documents
+    fake_graph = MagicMock()
+    fake_graph.invoke.return_value = {
+        "messages": [
+            AIMessage(content="", tool_calls=[{"name": "web_search", "args": {"query": "x"}, "id": "call1"}]),
+            ToolMessage(
+                name="web_search", tool_call_id="call1",
+                content=json.dumps([{"title": "T", "url": "https://example.com", "snippet": "hello"}]),
+            ),
+        ]
+    }
+    with patch.object(researcher_mod, "_build_tool_subgraph", return_value=fake_graph):
+        docs, tool_usage = researcher_mod._augment_with_tools(
+            "q", [], researcher_mod._default_tool_usage(), {}
+        )
 
-    docs = [_fake_doc("relevant content"), _fake_doc("irrelevant content"), _fake_doc("also relevant")]
-    state = _make_state(question="What is the topic?", documents=docs)
-
-    fake_llm = RunnableLambda(lambda x: AIMessage(content='["yes", "no", "yes"]'))
-    with patch("rag.agents.grader.get_llm", return_value=fake_llm):
-        result = grade_documents(state)
-
-    assert len(result["documents"]) == 2
-    assert result["documents"][0].page_content == "relevant content"
-    assert result["documents"][1].page_content == "also relevant"
-
-
-def test_grader_keeps_all_docs_on_llm_error():
-    from rag.agents.grader import grade_documents
-
-    docs = [_fake_doc("doc 1"), _fake_doc("doc 2")]
-    state = _make_state(documents=docs)
-
-    with patch("rag.agents.grader.get_llm", side_effect=RuntimeError("API down")):
-        result = grade_documents(state)
-
-    assert len(result["documents"]) == 2
+    assert tool_usage["web_search"]["used"] is True
+    assert tool_usage["web_search"]["count"] == 1
+    assert docs[0].metadata["source"] == "web"
+    assert docs[0].metadata["url"] == "https://example.com"
 
 
-# Hallucination checker tests
+def test_augment_with_tools_records_calculator_usage():
+    from rag.agents import researcher as researcher_mod
 
-def test_hallucination_checker_catches_ungrounded_answer():
-    from rag.agents.hallucination import check_hallucination, GroundednessScore  # noqa: F401
-    from langchain_core.messages import AIMessage
+    fake_graph = MagicMock()
+    fake_graph.invoke.return_value = {
+        "messages": [
+            AIMessage(content="", tool_calls=[{"name": "calculator", "args": {"expression": "2+2"}, "id": "call1"}]),
+            ToolMessage(name="calculator", tool_call_id="call1", content="4"),
+        ]
+    }
+    with patch.object(researcher_mod, "_build_tool_subgraph", return_value=fake_graph):
+        docs, tool_usage = researcher_mod._augment_with_tools(
+            "q", [], researcher_mod._default_tool_usage(), {}
+        )
+
+    assert docs == []
+    assert tool_usage["calculator"] == {"used": True, "expression": "2+2", "result": "4"}
+
+
+def test_tool_subgraph_caps_rounds_even_if_model_keeps_calling_tools():
+    from langchain_core.messages import HumanMessage
+    from rag.agents import researcher as researcher_mod
+
+    call_count = {"n": 0}
+
+    def fake_invoke(messages, config=None):
+        call_count["n"] += 1
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": "calculator", "args": {"expression": "1+1"}, "id": f"call{call_count['n']}"}],
+        )
+
+    fake_bound_llm = MagicMock()
+    fake_bound_llm.invoke.side_effect = fake_invoke
+    fake_llm = MagicMock()
+    fake_llm.bind_tools.return_value = fake_bound_llm
+
+    researcher_mod._build_tool_subgraph.cache_clear()
+    with patch.object(researcher_mod, "get_llm", return_value=fake_llm):
+        graph = researcher_mod._build_tool_subgraph()
+        graph.invoke({"messages": [HumanMessage(content="loop forever")], "rounds": 0})
+    researcher_mod._build_tool_subgraph.cache_clear()
+
+    assert call_count["n"] == researcher_mod.MAX_TOOL_ROUNDS
+
+
+# ─────────────────────────────────────────────
+# Critic
+# ─────────────────────────────────────────────
+
+def _mock_critic_llm(verdict: str, reason: str = ""):
+    from rag.agents.critic import CriticVerdict
+
+    parsed = CriticVerdict(verdict=verdict, reason=reason)
+    structured = RunnableLambda(lambda _: {"raw": AIMessage(content=""), "parsed": parsed})
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+    return llm
+
+
+def test_critic_approves_grounded_answer():
+    from rag.agents.critic import critic_node
+    from rag.agents.memory import clear_memory
+
+    clear_memory("critic_test_session")
+    state = _make_state(
+        session_id="critic_test_session",
+        generation="Python is a language.",
+        raw_generation="Python is a language. [[ref1:1]]",
+        documents=[_fake_doc()],
+    )
+    with patch("rag.agents.critic.get_llm", return_value=_mock_critic_llm("approve")):
+        result = critic_node(state)
+
+    assert result["critic_feedback"] == "approve"
+    assert result["grounded"] is True
+    clear_memory("critic_test_session")
+
+
+def test_critic_reports_on_step_progress():
+    from rag.agents.critic import critic_node
+    from rag.agents.memory import clear_memory
+
+    clear_memory("critic_step_session")
+    steps: list[str] = []
+    state = _make_state(
+        session_id="critic_step_session",
+        generation="Python is a language.",
+        raw_generation="Python is a language. [[ref1:1]]",
+        documents=[_fake_doc()],
+    )
+    with patch("rag.agents.critic.get_llm", return_value=_mock_critic_llm("approve")):
+        critic_node(state, {"configurable": {"on_step": steps.append}})
+
+    assert steps == ["Reviewing answer…"]
+    clear_memory("critic_step_session")
+
+
+def test_critic_requests_revision_and_increments_retry_count():
+    from rag.agents.critic import critic_node
 
     state = _make_state(
+        generation="The sky is green.",
+        raw_generation="The sky is green.",
         documents=[_fake_doc("The sky is blue.")],
-        generation="The sky is green and made of cheese.",
         retry_count=0,
     )
-    # Use RunnableLambda so the chain step receives/returns proper objects
-    mock_llm = RunnableLambda(lambda _: AIMessage(content="no"))
-    with patch("rag.agents.hallucination.get_llm", return_value=mock_llm):
-        result = check_hallucination(state)
+    with patch("rag.agents.critic.get_llm", return_value=_mock_critic_llm("revise", "not grounded")):
+        result = critic_node(state)
 
+    assert result["critic_feedback"] == "revise: not grounded"
     assert result["grounded"] is False
     assert result["retry_count"] == 1
-    assert result["generation"] == ""
 
 
-def test_hallucination_checker_passes_grounded_answer():
-    from rag.agents.hallucination import check_hallucination, GroundednessScore  # noqa: F401
-    from langchain_core.messages import AIMessage
+def test_critic_defaults_to_approve_on_llm_error():
+    from rag.agents.critic import critic_node
 
-    state = _make_state(
-        documents=[_fake_doc("The sky is blue.")],
-        generation="According to the document, the sky is blue.",
-    )
-    mock_llm = RunnableLambda(lambda _: AIMessage(content="yes"))
-    with patch("rag.agents.hallucination.get_llm", return_value=mock_llm):
-        result = check_hallucination(state)
+    state = _make_state(generation="Answer.", raw_generation="Answer.")
+    with patch("rag.agents.critic.get_llm", side_effect=RuntimeError("API down")):
+        result = critic_node(state)
 
+    assert result["critic_feedback"] == "approve"
     assert result["grounded"] is True
 
 
-# Retry / conditional edge tests
+def test_critic_returns_only_actually_cited_documents():
+    """Citations shown to the user should be exactly the sources the model referenced."""
+    from rag.agents.critic import critic_node
 
-def test_retry_loop_stops_at_max_retries():
-    from rag.agents.graph import decide_after_grading
+    cited_doc = _fake_doc("cited chunk", ref="ref1", page=1)
+    uncited_doc = _fake_doc("uncited chunk", ref="ref2", page=2)
+    state = _make_state(
+        generation="Answer citing one source.",
+        raw_generation="Answer citing one source. [[ref1:1]]",
+        documents=[cited_doc, uncited_doc],
+    )
+    with patch("rag.agents.critic.get_llm", return_value=_mock_critic_llm("approve")):
+        result = critic_node(state)
 
-    state = _make_state(documents=[], retry_count=3, error="")
-    assert decide_after_grading(state) == "fallback"
-
-
-def test_retry_loop_rewrites_when_below_max():
-    from rag.agents.graph import decide_after_grading
-
-    state = _make_state(documents=[], retry_count=1, error="")
-    assert decide_after_grading(state) == "rewrite_query"
-
-
-def test_not_indexed_error_goes_to_fallback():
-    from rag.agents.graph import decide_after_grading
-
-    state = _make_state(documents=[], retry_count=0, error="No documents indexed.")
-    assert decide_after_grading(state) == "fallback"
+    assert result["cited_documents"] == [cited_doc]
 
 
-def test_hallucination_routes_to_end_when_grounded():
+def test_critic_returns_no_citations_for_refusal():
+    from rag.agents.critic import critic_node
+
+    docs = [_fake_doc("irrelevant chunk", ref="ref1", page=1)]
+    state = _make_state(
+        generation="I do not know based on the provided document.",
+        raw_generation="I do not know based on the provided document.",
+        documents=docs,
+    )
+    with patch("rag.agents.critic.get_llm", return_value=_mock_critic_llm("approve")):
+        result = critic_node(state)
+
+    assert result["cited_documents"] == []
+
+
+def test_critic_format_context_includes_citation_tags():
+    from rag.agents.critic import _format_context
+
+    doc = _fake_doc("some content", ref="ref9", page=4)
+    context = _format_context([doc], {})
+
+    assert "[[ref9:4]]" in context
+
+
+def test_critic_format_context_tags_calculator_result():
+    from rag.agents.critic import _format_context
+
+    tool_usage = {"calculator": {"used": True, "expression": "199-1+200", "result": "398"}}
+    context = _format_context([], tool_usage)
+
+    assert "[[calc]]" in context
+    assert "398" in context
+
+
+# ─────────────────────────────────────────────
+# Synthesizer
+# ─────────────────────────────────────────────
+
+def test_build_context_tags_calculator_result():
+    from rag.agents.synthesizer import _build_context
+
+    tool_usage = {"calculator": {"used": True, "expression": "199-1+200", "result": "398"}}
+    context = _build_context([], tool_usage)
+
+    assert "[[calc]]" in context
+    assert "398" in context
+
+
+def test_synthesizer_strips_citation_tags_for_display():
+    from rag.agents.synthesizer import synthesizer_node
+
+    chain = RunnableLambda(lambda _: "Python is a language. [[ref1:1]]")
+    with patch("rag.agents.synthesizer._get_chain", return_value=chain):
+        result = synthesizer_node(_make_state(documents=[_fake_doc()]))
+
+    assert result["raw_generation"] == "Python is a language. [[ref1:1]]"
+    assert result["generation"] == "Python is a language."
+
+
+def test_synthesizer_reports_writing_vs_revising_step():
+    from rag.agents.synthesizer import synthesizer_node
+
+    chain = RunnableLambda(lambda _: "Python is a language. [[ref1:1]]")
+    with patch("rag.agents.synthesizer._get_chain", return_value=chain):
+        first_steps: list[str] = []
+        synthesizer_node(_make_state(documents=[_fake_doc()]), {"configurable": {"on_step": first_steps.append}})
+
+        revise_steps: list[str] = []
+        synthesizer_node(
+            _make_state(documents=[_fake_doc()], critic_feedback="revise: missing citation"),
+            {"configurable": {"on_step": revise_steps.append}},
+        )
+
+    assert first_steps == ["Writing answer…"]
+    assert revise_steps == ["Revising answer…"]
+
+
+def test_synthesizer_incorporates_revision_feedback():
+    from rag.agents.synthesizer import synthesizer_node
+
+    captured = {}
+
+    def _capture(inputs):
+        captured.update(inputs)
+        return "Revised answer. [[ref1:1]]"
+
+    chain = RunnableLambda(_capture)
+    state = _make_state(
+        documents=[_fake_doc()],
+        critic_feedback="revise: missing citation",
+        raw_generation="Old draft.",
+    )
+    with patch("rag.agents.synthesizer._get_chain", return_value=chain):
+        synthesizer_node(state)
+
+    assert "rejected by the critic" in captured["input"]
+    assert "missing citation" in captured["input"]
+    assert "Old draft." in captured["input"]
+
+
+def test_synthesizer_falls_back_on_llm_error():
+    from rag.agents.synthesizer import synthesizer_node
+
+    with patch("rag.agents.synthesizer._get_chain", side_effect=RuntimeError("API down")):
+        result = synthesizer_node(_make_state(documents=[_fake_doc("Some excerpt.")]))
+
+    assert "Some excerpt." in result["generation"]
+    assert result["grounded"] is True
+
+
+def test_strip_citation_tags_handles_multiple_tags():
+    from rag.agents.synthesizer import strip_citation_tags
+
+    text = "First fact [[ref1:1]] and second fact [[web:https://x.com]] ."
+    assert strip_citation_tags(text) == "First fact and second fact."
+
+
+def test_strip_citation_tags_handles_malformed_bracket_list():
+    from rag.agents.synthesizer import extract_cited_tags, strip_citation_tags
+
+    text = "A claim backed by three sources [[ref1:1], [ref1:2], [web:https://x.com]]."
+    assert strip_citation_tags(text) == "A claim backed by three sources."
+    assert extract_cited_tags(text) == {"ref1:1", "ref1:2", "web:https://x.com"}
+
+
+def test_citation_tag_for_document_and_web_source():
+    from rag.agents.synthesizer import citation_tag
+
+    doc = _fake_doc(ref="ref3", page=2)
+    assert citation_tag(doc) == "ref3:2"
+
+    web_doc = _fake_doc(source="web", url="https://example.com")
+    assert citation_tag(web_doc) == "web:https://example.com"
+
+
+def test_extract_cited_tags_returns_unique_set():
+    from rag.agents.synthesizer import extract_cited_tags
+
+    text = "Fact one [[ref1:1]] and fact two [[ref1:1]] and [[web:https://x.com]]."
+    assert extract_cited_tags(text) == {"ref1:1", "web:https://x.com"}
+
+
+# ─────────────────────────────────────────────
+# Supervisor routing
+# ─────────────────────────────────────────────
+
+def test_route_after_researcher_goes_to_fallback_on_error():
+    from rag.agents.supervisor import route_after_researcher
+
+    assert route_after_researcher(_make_state(error="No documents indexed.")) == "fallback"
+
+
+def test_route_after_researcher_goes_to_synthesizer():
+    from rag.agents.supervisor import route_after_researcher
+
+    assert route_after_researcher(_make_state(error="")) == "synthesizer"
+
+
+def test_route_after_critic_ends_on_approve():
     from langgraph.graph import END
-    from rag.agents.graph import decide_after_hallucination
+    from rag.agents.supervisor import route_after_critic
 
-    state = _make_state(grounded=True, retry_count=0)
-    assert decide_after_hallucination(state) == END
-
-
-def test_hallucination_routes_to_generate_when_not_grounded():
-    from rag.agents.graph import decide_after_hallucination
-
-    state = _make_state(grounded=False, retry_count=1)
-    assert decide_after_hallucination(state) == "generate"
+    assert route_after_critic(_make_state(critic_feedback="approve", retry_count=0)) == END
 
 
-# Full pipeline test (mocked LLM nodes)
+def test_route_after_critic_loops_within_revision_budget():
+    from rag.agents.supervisor import route_after_critic
 
-def test_full_pipeline_end_to_end(tmp_path, monkeypatch):
-    """Full graph run with mocked store + embedding, all LLM nodes mocked."""
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path))
+    assert route_after_critic(_make_state(critic_feedback="revise: x", retry_count=2)) == "synthesizer"
 
-    doc_id = "pipeline_doc"
-    pdf_dir = tmp_path / "pdfs"
-    pdf_dir.mkdir(parents=True)
-    (pdf_dir / f"{doc_id}.pdf").write_bytes(b"placeholder")
 
-    from unstructured.documents.elements import NarrativeText
-    from types import SimpleNamespace
-    _el = NarrativeText(text="Python is a programming language.")
-    _el.metadata = SimpleNamespace(page_number=1)
-    with patch("rag.ingest.extract_elements", return_value=[_el]), \
-         patch("rag.ingest.clear_document"), \
-         patch("rag.ingest.add_documents"):
-        from rag.ingest import index_document
-        index_document(doc_id)
+def test_route_after_critic_ends_when_revision_budget_exhausted():
+    from langgraph.graph import END
+    from rag.agents.supervisor import route_after_critic
 
+    assert route_after_critic(_make_state(critic_feedback="revise: x", retry_count=3)) == END
+
+
+# ─────────────────────────────────────────────
+# Full pipeline (mocked nodes)
+# ─────────────────────────────────────────────
+
+def test_full_pipeline_end_to_end():
     from rag.agents.graph import build_graph
+
     fake_doc = _fake_doc("Python is a programming language.")
 
-    with patch("rag.agents.graph.retrieve", return_value={"documents": [fake_doc], "hyde_triggered": False}), \
-         patch("rag.agents.graph.grade_documents", return_value={"documents": [fake_doc]}), \
-         patch("rag.agents.graph.generate", return_value={"generation": "Python is a language."}), \
-         patch("rag.agents.graph.check_hallucination", return_value={"grounded": True}):
-
+    with patch("rag.agents.supervisor.researcher_node", return_value={
+            "documents": [fake_doc], "hyde_triggered": False, "error": "",
+            "tool_usage": {"web_search": {"used": False, "count": 0, "results": []},
+                           "calculator": {"used": False, "expression": "", "result": ""}},
+         }), \
+         patch("rag.agents.supervisor.synthesizer_node", return_value={
+             "generation": "Python is a language.", "raw_generation": "Python is a language. [[ref1:1]]",
+         }), \
+         patch("rag.agents.supervisor.critic_node", return_value={"critic_feedback": "approve", "grounded": True}):
         build_graph.cache_clear()
-        result = build_graph().invoke(_make_state(question="What is Python?", doc_id=doc_id))
+        result = build_graph().invoke(_make_state(question="What is Python?", doc_id="pipeline_doc"))
 
     build_graph.cache_clear()
-
     assert result["generation"] == "Python is a language."
     assert result["grounded"] is True
 
 
-# Conversation memory tests
+def test_full_pipeline_revises_once_then_approves():
+    from rag.agents.graph import build_graph
+
+    fake_doc = _fake_doc("Python is a programming language.")
+    synth_calls = []
+
+    def fake_synthesizer(state):
+        synth_calls.append(state.get("critic_feedback", ""))
+        return {"generation": f"draft {len(synth_calls)}", "raw_generation": f"draft {len(synth_calls)} [[ref1:1]]"}
+
+    critic_verdicts = iter([
+        {"critic_feedback": "revise: needs a citation", "grounded": False, "retry_count": 1},
+        {"critic_feedback": "approve", "grounded": True},
+    ])
+
+    with patch("rag.agents.supervisor.researcher_node", return_value={
+            "documents": [fake_doc], "hyde_triggered": False, "error": "",
+            "tool_usage": {"web_search": {"used": False, "count": 0, "results": []},
+                           "calculator": {"used": False, "expression": "", "result": ""}},
+         }), \
+         patch("rag.agents.supervisor.synthesizer_node", side_effect=fake_synthesizer), \
+         patch("rag.agents.supervisor.critic_node", side_effect=lambda state: next(critic_verdicts)):
+        build_graph.cache_clear()
+        result = build_graph().invoke(_make_state(question="What is Python?", doc_id="pipeline_doc"))
+
+    build_graph.cache_clear()
+    assert len(synth_calls) == 2
+    assert result["generation"] == "draft 2"
+    assert result["grounded"] is True
+
+
+# ─────────────────────────────────────────────
+# Conversation memory
+# ─────────────────────────────────────────────
 
 def test_conversation_memory_stores_and_retrieves():
     from rag.agents.memory import get_memory, clear_memory

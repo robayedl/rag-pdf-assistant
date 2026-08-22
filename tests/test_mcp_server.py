@@ -81,7 +81,7 @@ def test_validate_api_key_returns_none_on_db_error():
 
 
 # ---------------------------------------------------------------------------
-# mcp_server.server — tools (user injected via ContextVar)
+# mcp_server.server: tools (user injected via ContextVar)
 # ---------------------------------------------------------------------------
 
 def _set_user(user_id: str):

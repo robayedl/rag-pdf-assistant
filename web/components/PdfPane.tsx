@@ -289,7 +289,7 @@ function PdfToolbar({ currentPage, numPages, onPrev, onNext, onClose, hideClose 
         </Button>
       )}
       <span className="text-xs text-muted-foreground tabular-nums select-none min-w-[4rem] text-center">
-        {currentPage > 0 ? (citationMode ? `p.${currentPage}` : `${currentPage} / ${numPages || "—"}`) : "—"}
+        {currentPage > 0 ? (citationMode ? `p.${currentPage}` : `${currentPage} / ${numPages || "-"}`) : "-"}
       </span>
       {!citationMode && (
         <Button variant="ghost" size="icon" className="size-7" onClick={onNext}

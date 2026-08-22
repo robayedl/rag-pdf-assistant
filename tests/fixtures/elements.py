@@ -2,7 +2,7 @@
 Fake unstructured element factories used in ingest tests.
 
 Keeping element construction here isolates tests from unstructured's internal
-class hierarchy — only the attributes ingest.py actually reads are required.
+class hierarchy. Only the attributes ingest.py actually reads are required.
 """
 from __future__ import annotations
 

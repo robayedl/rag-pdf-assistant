@@ -1,3 +1,4 @@
+"""Superseded by the supervisor's revise loop in rag/agents/. Kept for reference."""
 from __future__ import annotations
 
 import logging

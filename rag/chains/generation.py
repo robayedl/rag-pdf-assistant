@@ -19,7 +19,7 @@ _SYSTEM_PROMPT = (
     "- When the context contains labels, names, or terms that directly address the "
     "substance of the question, use them to answer. Do not refuse just because a "
     "secondary detail (e.g. exact figure number, table position) is not explicitly "
-    "confirmed; answer from what IS in the context.\n"
+    "confirmed, answer from what IS in the context.\n"
     "- If the context genuinely contains no information relevant to the question, "
     "respond with: 'I do not know based on the provided document.'\n"
     "- Do not speculate or add information beyond what is in the context.\n"
