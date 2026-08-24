@@ -5,7 +5,6 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-preview":  (0.15,  0.60),
     "gemini-2.5-pro":            (1.25,  10.00),
     "gemini-2.0-flash":          (0.10,  0.40),
-    # Embedding model billed at input price only, output_$/1M is 0
     "sentence-transformers/all-mpnet-base-v2": (0.0, 0.0),
 }
 

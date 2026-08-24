@@ -174,25 +174,22 @@ function useSmoothedValue(real: number, sourceType?: string): number {
   return display;
 }
 
-// One-line label + percentage, then bar on the line below
 function StatusProgress({ status, value, sourceType }: { status: string; value: number; sourceType?: string }) {
   const display = useSmoothedValue(value, sourceType);
   const isUploading = status === "uploading";
   return (
     <div className="flex flex-col gap-1.5">
-      {/* Top row: status icon + label + percentage, all on one line */}
-      <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+      <div className="flex items-center w-full">
         <Loader2Icon className="size-3 animate-spin text-blue-400 shrink-0" />
         <span className="text-blue-400 text-xs ml-1">
           {isUploading ? "Uploading" : "Processing"}
         </span>
         {!isUploading && (
-          <span className="text-xs text-muted-foreground tabular-nums" style={{ marginLeft: "auto" }}>
+          <span className="text-xs text-muted-foreground tabular-nums ml-auto">
             {Math.floor(display)}%
           </span>
         )}
       </div>
-      {/* Bar */}
       <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
         <div
           className="h-full rounded-full bg-primary"

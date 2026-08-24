@@ -190,7 +190,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DocuMind", lifespan=lifespan)
+app = FastAPI(title="DocuMind", version="3.0.0", lifespan=lifespan)
 
 _cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
@@ -455,7 +455,7 @@ async def index(
     doc = await _get_doc_or_404(db, doc_id, user.user_id)
 
     t0 = time.perf_counter()
-    chunks_indexed, collection_name, page_count = index_document(doc_id)
+    chunks_indexed, collection_name, page_count, _, _ = index_document(doc_id)
     index_time_s = time.perf_counter() - t0
 
     doc.status = "indexed"
@@ -505,7 +505,7 @@ async def index_stream(
             yield _sse(event, data)
 
         try:
-            chunks_indexed, _, page_count = await future
+            chunks_indexed, _, page_count, _, _ = await future
         except Exception as e:
             yield _sse("error", str(e))
             return

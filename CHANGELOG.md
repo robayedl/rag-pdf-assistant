@@ -2,7 +2,7 @@
 
 Notable engineering milestones for DocuMind, an agentic RAG system for chatting with documents. Newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [3.0.0] - Unreleased
+## [3.0.0] - 2026-08-24
 
 ### Added
 - Multi-agent architecture: a Researcher / Synthesizer / Critic supervisor pattern (LangGraph) replaces the linear pipeline, with the Critic routing drafts back for revision on hallucination or missing citations.

@@ -12,7 +12,7 @@ const links = [
   { href: "/docs",                label: "Documents",  external: false },
   { href: "/chat",                label: "Chat",       external: false },
   { href: "/usage",               label: "Usage",      external: false },
-  { href: "/api-keys",             label: "API Keys",   external: false },
+  { href: "/api-keys",            label: "API Keys",   external: false },
   { href: "/how-to-use",          label: "How to Use", external: false },
   { href: "/about",               label: "About",      external: false },
   { href: "https://github.com/robayedl/documind", label: "GitHub", external: true },

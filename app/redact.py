@@ -6,7 +6,7 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-PII_REDACTION = os.getenv("PII_REDACTION", "false").lower() == "true"
+PII_REDACTION = os.getenv("PII_REDACTION", "true").lower() == "true"
 
 _ENTITIES = ["EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD"]
 
