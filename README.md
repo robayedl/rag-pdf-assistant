@@ -1,24 +1,28 @@
 # DocuMind: Agentic Document Intelligence
 
-> Chat with any PDF or DOCX file using a production-grade agentic pipeline powered by LangGraph, Gemini 2.5 Flash, hybrid search, real-time streaming, Clerk auth, and Postgres + pgvector storage.
+> Chat with any PDF or DOCX through a multi-agent RAG system: a LangGraph supervisor (Researcher · Synthesizer · Critic) with agentic tool calling, hybrid retrieval, and RAGAS-measured answer quality.
 
 [![CI](https://github.com/robayedl/documind/actions/workflows/ci.yml/badge.svg)](https://github.com/robayedl/documind/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.12-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Python](https://img.shields.io/badge/python-3.12-brown)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.136-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-orange)
 ![LangGraph](https://img.shields.io/badge/LangGraph-agentic-purple)
 ![License](https://img.shields.io/badge/license-MIT-red)
 
-Built by **Robayed Ashraf** [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/robayedashraf/)
-[![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat&logo=github&logoColor=white)](https://github.com/robayedl)
+Built by [**Robayed Ashraf**](#author) [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/robayedashraf/)
 [![Portfolio](https://img.shields.io/badge/Portfolio-000000?style=flat&logo=githubpages&logoColor=white)](https://robayedl.github.io/)
-[![Email](https://img.shields.io/badge/Email-D14836?style=flat&logo=gmail&logoColor=white)](mailto:robayedashraf@gmail.com)
-
 ---
 
 ## Demo
 
-https://github.com/user-attachments/assets/aa924408-7f80-4968-b5b2-7e2bac769806
+DocuMind v3.0.0 
+
+https://github.com/user-attachments/assets/05fa34f6-6409-4dc0-9060-37179926b734
+
+DocuMind v2.0.0 : https://youtu.be/npWqu6u-TKk
+
+DocuMind v1.0.0 : https://youtu.be/mBcN5ejaxfc
 
 ---
 
@@ -79,8 +83,9 @@ flowchart TD
     subgraph Researcher
         RET[Hybrid Retrieval\npgvector + ts_rank + RRF] --> RR[Cross-Encoder Rerank]
         RR --> HY{Below HyDE\nthreshold?}
-        HY -->|yes| HD[HyDE: hypothetical\npassage, re-retrieve]
-        HD --> RET
+        HY -->|yes| HD[HyDE: hypothetical passage,\ndense re-retrieve]
+        HD --> MG[RRF merge\n+ rerank]
+        MG --> TL
         HY -->|no| TL[Tool-Calling Loop\nmax 3 rounds]
         TL -->|web_search| WEB[(Tavily)]
         TL -->|calculator| CALC[(simpleeval)]
@@ -113,7 +118,7 @@ flowchart LR
 
     UP --> T[Tables → Markdown\nchunk]
     UP --> F[Figures → Gemini\nVision caption]
-    UP --> TX[Text → 800-token\nchunks]
+    UP --> TX[Text → 800-char\nchunks]
 
     T & F & TX --> CR{Contextual\nRetrieval?}
     CR -->|yes| CTX[Gemini prepends\ncontext sentence]
@@ -259,11 +264,11 @@ documind/
 ├── app/
 │   ├── auth.py           # Clerk JWT validation (FastAPI dependency)
 │   ├── db.py             # SQLAlchemy async engine + session factory
-│   ├── models.py         # ORM models: User, Document, Conversation, Message, ApiKey
+│   ├── models.py         # ORM models: User, Document, Conversation, Message, IngestionEvent, ApiKey
 │   ├── pricing.py        # Model cost table + compute_cost()
 │   ├── ratelimit.py      # Redis token-bucket rate limiter
 │   ├── redact.py         # Presidio PII redaction / restore
-│   ├── storage.py        # File-system helpers (PDF read/write)
+│   ├── storage.py        # File-system helpers (PDF/DOCX read, write, delete)
 │   └── main.py           # FastAPI routes + MCP HTTP/SSE mount
 ├── mcp_server/
 │   ├── auth.py           # API key hashing + DB validation
@@ -278,6 +283,9 @@ documind/
 │   ├── chains/           # Retrieval (pgvector + ts_rank + HyDE), reranking
 │   ├── store.py          # pgvector CRUD (add, search, clear)
 │   ├── cache.py          # Redis semantic cache
+│   ├── llm.py            # Gemini + embedding singletons (lru_cache)
+│   ├── contextualize.py  # Contextual Retrieval: per-chunk context sentences, SQLite-cached
+│   ├── usage.py          # Per-request token usage tracking (contextvar bucket)
 │   └── ingest.py         # Unified PDF pipeline: hi_res + Tesseract OCR, LibreOffice DOCX conversion
 ├── migrations/           # SQL migrations: 001_init → 005_api_keys
 ├── legacy/
@@ -285,12 +293,15 @@ documind/
 │   ├── scripts/          # One-off tooling (Chroma → pgvector migration)
 │   └── streamlit/        # Previous Streamlit UI (kept for reference)
 ├── web/                  # Next.js 16 frontend (App Router, shadcn/ui, Clerk)
-│   ├── app/              # Pages: /, /chat, /docs, /usage, /api-keys, /about, /how-to-use
-│   ├── components/       # Nav, PdfPane, DocWatcher (global bg poller), shadcn primitives
-│   ├── lib/              # Typed API client with auth headers (api.ts)
+│   ├── app/              # Pages: /, /chat, /docs, /usage, /api-keys, /about, /how-to-use, /login
+│   ├── components/       # Nav, PdfPane, Doc/ChatWatcher (global bg pollers), shadcn primitives
+│   ├── lib/              # Typed API client (api.ts), localStorage chat sessions (chat-storage.ts)
+│   ├── __tests__/        # Jest + Testing Library suites
 │   └── proxy.ts          # Clerk route protection for /chat, /docs, and /usage
-├── eval/                 # RAGAS runner and golden dataset
-└── tests/                # Python backend tests
+├── eval/                 # RAGAS runner, 30-question golden dataset, saved results
+├── tests/                # Backend pytest suites
+├── docker-compose.yml    # Postgres+pgvector, Redis Stack, API, worker, MCP, web
+└── Makefile              # run / test / lint / eval shortcuts
 ```
 
 ---
@@ -319,17 +330,21 @@ make update-readme                # refresh scores without re-running
 
 ## Tests
 
+235 automated tests run in CI on every push to `main`: 173 backend (pytest) covering the agent graph, tools, ingestion, auth isolation, and the MCP server, plus 62 frontend (Jest + Testing Library), with ruff linting and a strict TypeScript check.
+
 ```bash
-make test        # backend
-make test-ui     # frontend
-make lint
+make test        # backend (pytest)
+make test-ui     # frontend (Jest)
+make lint        # ruff
 ```
 
 ---
 
 ## Author
 
-**Robayed Ashraf**, AI/ML Engineer specializing in production-grade agentic AI, LLM applications, and real-time computer vision.
+**Robayed Ashraf**, AI/ML Engineer specializing in production-grade agentic AI, LLM applications, and real-time computer vision. Based in Sydney, Australia (open to relocate).
+
+Sole engineer on DocuMind across three major releases, owning every architecture decision from database selection and retrieval design to API structure and deployment strategy. Holds a Master of Artificial Intelligence (Computer Vision) from the University of Technology Sydney.
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/robayedashraf/)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat&logo=github&logoColor=white)](https://github.com/robayedl)

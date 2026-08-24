@@ -232,10 +232,8 @@ export function indexDocStream(
     });
 }
 
-export function getDocFileUrl(docId: string, token?: string): string {
-  // Token is passed as query param for direct PDF loading in iframe/react-pdf
-  const url = `${API_URL}/documents/${docId}/file`;
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+export function getDocFileUrl(docId: string): string {
+  return `${API_URL}/documents/${docId}/file`;
 }
 
 export function getDocDownloadUrl(docId: string): string {
